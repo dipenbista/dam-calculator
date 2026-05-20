@@ -442,7 +442,7 @@ def compute_applied(geom, app):
     for i,(F,dist) in enumerate(app.vertical_forces):
         forces.append(make_force(f'Applied V{i+1}', V=F, x=heel_x-dist, stabilising=(F>=0)))
     for i,(F,h) in enumerate(app.horizontal_forces):
-        forces.append(make_force(f'Applied H{i+1}', H=abs(F), x=0.0, y=h, stabilising=(F<=0)))
+        forces.append(make_force(f'Applied H{i+1}', H=abs(F), x=heel_x, y=h, stabilising=(F<=0)))
     return forces
 
 
