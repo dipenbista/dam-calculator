@@ -94,6 +94,14 @@ class LoadCaseRequest(BaseModel):
     rock_anchor_force_per_m:     float = 0.0
     rock_anchor_cover_from_heel: float = 2.0
 
+    # Applied external forces
+    # vertical_forces   : list of [force_kN_per_m, distance_from_toe_m]
+    # horizontal_forces : list of [force_kN_per_m, height_above_toe_m]
+    #   positive V = downward (stabilising), negative V = upward (destabilising)
+    #   positive H = acts toward upstream (destabilising), negative = toward DS (stabilising)
+    applied_vertical_forces:   List[List[float]] = Field(default_factory=list)
+    applied_horizontal_forces: List[List[float]] = Field(default_factory=list)
+
     # Which load cases to run
     run_HRV:             bool = True
     run_DFV:             bool = True
@@ -186,7 +194,10 @@ def calculate(req: LoadCaseRequest):
         rock_anchor = RockAnchorConfig(include=req.rock_anchor_include,
                                        force_per_m=req.rock_anchor_force_per_m,
                                        cover_from_heel=req.rock_anchor_cover_from_heel)
-        applied     = AppliedForceConfig()
+        applied     = AppliedForceConfig(
+            vertical_forces   = [tuple(v) for v in req.applied_vertical_forces],
+            horizontal_forces = [tuple(h) for h in req.applied_horizontal_forces],
+        )
 
         # ── Warnings ──────────────────────────────────────────────────
         warnings = []
