@@ -226,21 +226,24 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-0, 100
-0, 100
-0, 107
-0.3, 107
-0.3, 106
-1.5, 106
-6.3, 100</textarea>
+0, 101
+2, 101
+4, 106
+5, 108
+5, 109
+5.4, 109
+5.4, 108
+7, 108
+8, 107
+12, 100</textarea>
       <div class="row2">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="0" step="0.1">
+          <input type="number" id="utp_x" value="5" step="0.1">
         </div>
         <div>
           <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="107" step="0.1">
+          <input type="number" id="utp_y" value="109" step="0.1">
         </div>
       </div>
     </div>
@@ -254,18 +257,18 @@
     <div class="card-body">
       <label>HRV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="106.5" step="0.1" placeholder="US">
+        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
         <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="107" step="0.1" placeholder="US">
+        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
         <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="108.5" step="0.1" placeholder="US">
-        <input type="number" id="MFV_ds" value="101" step="0.1" placeholder="DS">
+        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
       </div>
     </div>
   </div>
@@ -312,7 +315,7 @@
     </div>
     <div class="card-body">
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="silt_on" onchange="toggleSub('silt_sub',this)">
+        <label class="switch"><input type="checkbox" id="silt_on" checked onchange="toggleSub('silt_sub',this)">
           <span class="slider"></span></label>
         <label>Include silt</label>
       </div>
@@ -414,7 +417,63 @@
     </div>
   </div>
 
-  <!-- 10. Load cases to run -->
+  <!-- 10. Applied External Forces -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      ➕ Applied External Forces <span class="toggle">▾</span>
+    </div>
+    <div class="card-body collapsed">
+
+      <p style="font-size:0.76rem;color:#666;margin-bottom:10px;line-height:1.5">
+        Add any number of external point forces.<br>
+        <b>Vertical:</b> positive = downward (stabilising), negative = upward.<br>
+        <b>Horizontal:</b> positive = toward upstream (destabilising), negative = toward downstream.
+      </p>
+
+      <!-- Vertical forces table -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:0.78rem;font-weight:600;color:#1a3a5c">Vertical Forces</span>
+        <button onclick="addForceRow('vtable')"
+          style="font-size:0.75rem;padding:2px 8px;border:1px solid #2e6da4;
+                 border-radius:4px;background:#eaf3fb;color:#2e6da4;cursor:pointer">
+          + Add
+        </button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.76rem;margin-bottom:12px">
+        <thead>
+          <tr>
+            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Force (kN/m)</th>
+            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Distance from toe (m)</th>
+            <th style="background:#2e6da4;color:white;padding:5px 4px;width:28px"></th>
+          </tr>
+        </thead>
+        <tbody id="vtable"></tbody>
+      </table>
+
+      <!-- Horizontal forces table -->
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:0.78rem;font-weight:600;color:#1a3a5c">Horizontal Forces</span>
+        <button onclick="addForceRow('htable')"
+          style="font-size:0.75rem;padding:2px 8px;border:1px solid #2e6da4;
+                 border-radius:4px;background:#eaf3fb;color:#2e6da4;cursor:pointer">
+          + Add
+        </button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.76rem">
+        <thead>
+          <tr>
+            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Force (kN/m)</th>
+            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Height above toe (m)</th>
+            <th style="background:#2e6da4;color:white;padding:5px 4px;width:28px"></th>
+          </tr>
+        </thead>
+        <tbody id="htable"></tbody>
+      </table>
+
+    </div>
+  </div>
+
+  <!-- 11. Load cases to run -->
   <div class="card">
     <div class="card-head" onclick="toggleCard(this)">
       📋 Load Cases to Run <span class="toggle">▾</span>
@@ -433,7 +492,7 @@
         <label>MFV — Maximum Flood</label>
       </div>
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="run_DFV_nb checked"><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="run_DFV_nb"><span class="slider"></span></label>
         <label>DFV (no rock bolts)</label>
       </div>
     </div>
@@ -496,6 +555,43 @@
 </div>
 
 <script>
+// ── Applied force rows ──────────────────────────────────
+function addForceRow(tableId) {
+  const tbody = document.getElementById(tableId);
+  const tr    = document.createElement('tr');
+  const col1lbl = tableId === 'vtable' ? 'Force (kN/m)' : 'Force (kN/m)';
+  const col2lbl = tableId === 'vtable' ? 'dist_from_toe' : 'height_above_toe';
+  tr.innerHTML = `
+    <td style="padding:3px 4px">
+      <input type="number" step="any" placeholder="e.g. 50"
+             style="width:100%;padding:4px 6px;border:1px solid #c8d0dc;
+                    border-radius:3px;font-size:0.78rem">
+    </td>
+    <td style="padding:3px 4px">
+      <input type="number" step="any" placeholder="e.g. 3.5"
+             style="width:100%;padding:4px 6px;border:1px solid #c8d0dc;
+                    border-radius:3px;font-size:0.78rem">
+    </td>
+    <td style="padding:3px 4px;text-align:center">
+      <button onclick="this.closest('tr').remove()"
+        style="background:#fdecea;border:1px solid #f5c6cb;border-radius:3px;
+               color:#c0392b;font-size:0.8rem;padding:2px 6px;cursor:pointer">✕</button>
+    </td>`;
+  tbody.appendChild(tr);
+}
+
+function collectForceTable(tableId) {
+  const rows = document.querySelectorAll(`#${tableId} tr`);
+  const result = [];
+  rows.forEach(tr => {
+    const inputs = tr.querySelectorAll('input');
+    const v1 = parseFloat(inputs[0].value);
+    const v2 = parseFloat(inputs[1].value);
+    if (!isNaN(v1) && !isNaN(v2)) result.push([v1, v2]);
+  });
+  return result;
+}
+
 // ── Store last result for export ─────────────────────────
 let lastResponseData = null;
 
@@ -635,6 +731,9 @@ async function runCalc() {
       run_DFV:          cb('run_DFV'),
       run_MFV:          cb('run_MFV'),
       run_DFV_no_bolts: cb('run_DFV_nb'),
+
+      applied_vertical_forces:   collectForceTable('vtable'),
+      applied_horizontal_forces: collectForceTable('htable'),
     };
 
     const resp = await fetch('/calculate', {
