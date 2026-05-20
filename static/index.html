@@ -227,6 +227,7 @@
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
 0, 100
+0, 100
 0, 107
 0.3, 107
 0.3, 106
@@ -432,7 +433,7 @@
         <label>MFV — Maximum Flood</label>
       </div>
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="run_DFV_nb" checked><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="run_DFV_nb checked"><span class="slider"></span></label>
         <label>DFV (no rock bolts)</label>
       </div>
     </div>
@@ -688,10 +689,18 @@ function renderResults(data) {
     tabBar.appendChild(btn);
 
     // ── KPI summary ──────────────────────────────────────
-    const fsSlideOk  = res.FS_sliding   >= 1.5;
-    const fsOvOk     = res.FS_overturning >= 1.5;
+    // Criteria depend on load case:
+    //   HRV / DFV            → FS_slide ≥ 1.5,  resultant within L/3–2L/3
+    //   MFV / DFV (no bolts) → FS_slide ≥ 1.1,  resultant within L/6–5L/6
+    // FS Overturning: no colour applied (null)
+    const isStrict   = (res.case_name === 'HRV' || res.case_name === 'DFV');
+    const fsThresh   = isStrict ? 1.5 : 1.1;
+    const fsSlideOk  = res.FS_sliding >= fsThresh;
+    // Resultant check — use the flag already computed by the backend
+    // (backend sets resultant_check_type to "Middle third" for HRV/DFV
+    //  and "L/6–5L/6" for MFV/DFV-no-bolts, and sets in_middle_third accordingly)
     const midOk      = res.in_middle_third;
-    const heelOk     = res.sigma_heel   >= 0;
+    const heelOk     = res.sigma_heel >= 0;
 
     const kpi = (val, label, ok) => `
       <div class="kpi ${ok===null ? '' : ok ? 'ok' : 'fail'}">
@@ -699,12 +708,18 @@ function renderResults(data) {
         <div class="lbl">${label}</div>
       </div>`;
 
+    // Build threshold label for FS Sliding card
+    const fsLabel = `FS Sliding (≥ ${fsThresh.toFixed(1)})`;
+    // Build resultant label showing which zone applies
+    const midLabel = isStrict
+      ? `Resultant (L/3 – 2L/3)`
+      : `Resultant (L/6 – 5L/6)`;
+
     const summaryHtml = `
       <div class="summary-grid">
-        ${kpi(res.FS_sliding   >= 9998 ? '∞' : res.FS_sliding.toFixed(3),   'FS Sliding',    fsSlideOk)}
-        ${kpi(res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3), 'FS Overturning', fsOvOk)}
-        ${kpi(res.in_middle_third ? '✓ OK' : '✗ Outside',
-              res.resultant_check_type, midOk)}
+        ${kpi(res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3), fsLabel, fsSlideOk)}
+        ${kpi(res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3), 'FS Overturning', null)}
+        ${kpi(res.in_middle_third ? '✓ OK' : '✗ Outside', midLabel, midOk)}
         ${kpi(res.sigma_toe.toFixed(1)  + ' kN/m²', 'σ Toe',  res.sigma_toe  >= 0)}
         ${kpi(res.sigma_heel.toFixed(1) + ' kN/m²', 'σ Heel', heelOk)}
         ${kpi(res.x_resultant.toFixed(3) + ' m',    'Resultant x from toe', null)}
