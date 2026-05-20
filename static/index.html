@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gravity Dam Stability Calculator</title>
+<style>
+  /* ── Reset & base ─────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; color: #222; }
+
+  /* ── Header ───────────────────────────────────────────── */
+  header {
+    background: linear-gradient(135deg, #1a3a5c, #2e6da4);
+    color: white; padding: 18px 32px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  header h1 { font-size: 1.4rem; font-weight: 600; }
+  header p  { font-size: 0.82rem; opacity: 0.8; margin-top: 3px; }
+
+  /* ── Layout ───────────────────────────────────────────── */
+  .layout { display: flex; min-height: calc(100vh - 66px); }
+
+  /* ── Sidebar (inputs) ─────────────────────────────────── */
+  aside {
+    width: 380px; min-width: 320px; background: #fff;
+    border-right: 1px solid #dde3ec;
+    overflow-y: auto; padding: 20px 18px 40px;
+  }
+
+  /* ── Main panel (results) ─────────────────────────────── */
+  main { flex: 1; padding: 24px; overflow-y: auto; }
+
+  /* ── Section cards ────────────────────────────────────── */
+  .card {
+    background: #fff; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.10);
+    margin-bottom: 16px; overflow: hidden;
+  }
+  .card-head {
+    background: #2e6da4; color: #fff;
+    padding: 9px 14px; font-size: 0.82rem;
+    font-weight: 600; letter-spacing: .4px;
+    display: flex; justify-content: space-between; align-items: center;
+    cursor: pointer; user-select: none;
+  }
+  .card-head .toggle { font-size: 1rem; }
+  .card-body { padding: 12px 14px; }
+  .card-body.collapsed { display: none; }
+
+  /* ── Form elements ────────────────────────────────────── */
+  label { display: block; font-size: 0.78rem; color: #555; margin-bottom: 3px; margin-top: 10px; }
+  label:first-child { margin-top: 0; }
+  input[type=number], input[type=text], textarea {
+    width: 100%; padding: 6px 8px; border: 1px solid #c8d0dc;
+    border-radius: 4px; font-size: 0.82rem; background: #f8f9fb;
+    transition: border-color .15s;
+  }
+  input[type=number]:focus, textarea:focus {
+    outline: none; border-color: #2e6da4; background: #fff;
+  }
+  textarea { resize: vertical; min-height: 110px; font-family: monospace; font-size: 0.78rem; }
+
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  /* Toggle switch */
+  .toggle-row { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+  .toggle-row label { margin: 0; font-size: 0.82rem; color: #333; }
+  .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; inset: 0; background: #ccc;
+    border-radius: 20px; cursor: pointer; transition: .2s;
+  }
+  .slider::before {
+    content: ''; position: absolute; width: 14px; height: 14px;
+    left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .2s;
+  }
+  input:checked + .slider { background: #2e6da4; }
+  input:checked + .slider::before { transform: translateX(16px); }
+
+  .sub-fields { margin-top: 8px; padding-left: 8px; border-left: 2px solid #dde3ec; }
+
+  /* ── Run button ───────────────────────────────────────── */
+  .btn-run {
+    width: 100%; padding: 12px; margin-top: 18px;
+    background: linear-gradient(135deg, #1a8c4e, #27ae60);
+    color: white; border: none; border-radius: 6px;
+    font-size: 1rem; font-weight: 600; cursor: pointer;
+    transition: opacity .15s; letter-spacing: .3px;
+  }
+  .btn-run:hover   { opacity: .88; }
+  .btn-run:active  { opacity: .75; }
+  .btn-run:disabled { background: #aaa; cursor: not-allowed; }
+
+  /* ── Spinner ──────────────────────────────────────────── */
+  #spinner {
+    display: none; text-align: center; padding: 60px 0; color: #555;
+  }
+  .spin {
+    width: 44px; height: 44px; border: 4px solid #dde3ec;
+    border-top-color: #2e6da4; border-radius: 50%;
+    animation: spin .8s linear infinite; margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Geometry info bar ────────────────────────────────── */
+  #geom-bar {
+    display: none; background: #eaf3fb; border: 1px solid #b0cee8;
+    border-radius: 6px; padding: 10px 16px; margin-bottom: 18px;
+    font-size: 0.82rem; color: #1a3a5c;
+    display: none; gap: 20px; flex-wrap: wrap;
+  }
+  #geom-bar span { display: flex; align-items: center; gap: 5px; }
+  #geom-bar b { color: #2e6da4; }
+
+  /* ── Warning banner ───────────────────────────────────── */
+  .warning {
+    background: #fff3cd; border: 1px solid #ffc107;
+    border-radius: 5px; padding: 8px 12px; margin-bottom: 12px;
+    font-size: 0.82rem; color: #856404;
+  }
+
+  /* ── Tab bar ──────────────────────────────────────────── */
+  .tab-bar {
+    display: flex; gap: 4px; margin-bottom: 14px;
+    border-bottom: 2px solid #dde3ec; padding-bottom: 0;
+  }
+  .tab-btn {
+    padding: 8px 18px; border: 1px solid #dde3ec; border-bottom: none;
+    background: #f0f2f5; border-radius: 5px 5px 0 0;
+    cursor: pointer; font-size: 0.83rem; font-weight: 500;
+    color: #555; transition: background .12s;
+  }
+  .tab-btn.active { background: #fff; color: #1a3a5c; border-color: #b0cee8; font-weight: 700; }
+  .tab-pane { display: none; }
+  .tab-pane.active { display: block; }
+
+  /* ── Summary table ────────────────────────────────────── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 10px; margin-bottom: 20px;
+  }
+  .kpi {
+    background: #f8f9fb; border: 1px solid #dde3ec;
+    border-radius: 7px; padding: 12px 14px; text-align: center;
+  }
+  .kpi .val  { font-size: 1.5rem; font-weight: 700; color: #1a3a5c; }
+  .kpi .lbl  { font-size: 0.72rem; color: #777; margin-top: 2px; }
+  .kpi.ok    { border-color: #27ae60; }
+  .kpi.fail  { border-color: #e74c3c; }
+  .kpi.ok  .val  { color: #1a8c4e; }
+  .kpi.fail .val { color: #c0392b; }
+
+  /* ── Force table ──────────────────────────────────────── */
+  .tbl-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  th {
+    background: #2e6da4; color: white; padding: 7px 10px;
+    text-align: right; white-space: nowrap;
+  }
+  th:first-child { text-align: left; }
+  td { padding: 5px 10px; border-bottom: 1px solid #eef0f4; text-align: right; }
+  td:first-child { text-align: left; max-width: 220px; }
+  tr:hover td { background: #f0f6ff; }
+  tr.stabilising td:first-child { border-left: 3px solid #27ae60; padding-left: 7px; }
+  tr.destab      td:first-child { border-left: 3px solid #e74c3c; padding-left: 7px; }
+  tr.total td { font-weight: 700; background: #eaf3fb; border-top: 2px solid #2e6da4; }
+
+  /* ── Plot ──────────────────────────────────────────────── */
+  .plot-img { max-width: 100%; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+
+  /* ── Error box ─────────────────────────────────────────── */
+  #error-box {
+    display: none; background: #fdecea; border: 1px solid #f5c6cb;
+    border-radius: 6px; padding: 14px 16px; color: #721c24;
+    font-size: 0.83rem; white-space: pre-wrap; margin-bottom: 16px;
+  }
+
+  /* ── Download button ──────────────────────────────────── */
+  .btn-download {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 22px; margin-bottom: 18px;
+    background: linear-gradient(135deg, #1a6b3a, #27ae60);
+    color: white; border: none; border-radius: 6px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer;
+    transition: opacity .15s; text-decoration: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,.15);
+  }
+  .btn-download:hover   { opacity: .88; }
+  .btn-download:active  { opacity: .75; }
+  .btn-download:disabled { background: #aaa; cursor: not-allowed; }
+  .btn-download svg { flex-shrink: 0; }
+
+  /* ── Placeholder ───────────────────────────────────────── */
+  #placeholder {
+    text-align: center; padding: 80px 20px; color: #aaa;
+  }
+  #placeholder svg { margin-bottom: 16px; opacity: .4; }
+  #placeholder p { font-size: 1rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>⛰ Gravity Dam Stability Calculator</h1>
+    <p>Per unit width (1 m) analysis · kN, m, kN/m²</p>
+  </div>
+</header>
+
+<div class="layout">
+
+<!-- ══════════════════════════════════════════════════════
+     SIDEBAR — all inputs
+═══════════════════════════════════════════════════════════ -->
+<aside>
+
+  <!-- 1. Geometry -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      📐 Dam Geometry <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
+      <textarea id="coords" rows="12">0, 100
+0, 101
+2, 101
+4, 106
+5, 108
+5, 109
+5.4, 109
+5.4, 108
+7, 108
+8, 107
+12, 100</textarea>
+      <div class="row2">
+        <div>
+          <label>Upstream top point X</label>
+          <input type="number" id="utp_x" value="5" step="0.1">
+        </div>
+        <div>
+          <label>Upstream top point Y</label>
+          <input type="number" id="utp_y" value="109" step="0.1">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Water levels -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      💧 Water Levels (absolute elevation) <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <label>HRV — Upstream / Downstream</label>
+      <div class="row2">
+        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
+        <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
+      </div>
+      <label>DFV — Upstream / Downstream</label>
+      <div class="row2">
+        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
+        <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
+      </div>
+      <label>MFV — Upstream / Downstream</label>
+      <div class="row2">
+        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Materials -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🧱 Material Properties <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <label>Unit weight of dam (kN/m³)</label>
+      <input type="number" id="uw_dam"   value="24"  step="0.1">
+      <label>Unit weight of water (kN/m³)</label>
+      <input type="number" id="uw_water" value="10"  step="0.1">
+      <label>Friction coefficient (μ)</label>
+      <input type="number" id="mu"       value="1.0" step="0.01">
+    </div>
+  </div>
+
+  <!-- 4. Drainage -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🚰 Drainage <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="drain_on" onchange="toggleSub('drain_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include drainage curtain</label>
+      </div>
+      <div class="sub-fields collapsed" id="drain_sub">
+        <label>Distance from heel (m)</label>
+        <input type="number" id="drain_dist" value="2.0" step="0.1">
+        <label>Reduction factor</label>
+        <input type="number" id="drain_rf"   value="0.333" step="0.001">
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Silt -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🏜 Silt <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="silt_on" checked onchange="toggleSub('silt_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include silt</label>
+      </div>
+      <div class="sub-fields" id="silt_sub">
+        <label>Height on upstream side (m)</label>
+        <input type="number" id="silt_h"  value="2.0" step="0.1">
+        <label>Submerged unit weight (kN/m³)</label>
+        <input type="number" id="silt_uw" value="9.0" step="0.1">
+        <label>Friction angle φ (°)</label>
+        <input type="number" id="silt_phi" value="33"  step="0.5">
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Backfill -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🪨 Backfill <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="bf_p_on" onchange="toggleSub('bf_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include backfill pressure</label>
+      </div>
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="bf_w_on">
+          <span class="slider"></span></label>
+        <label>Include backfill weight</label>
+      </div>
+      <div class="sub-fields collapsed" id="bf_sub">
+        <label>Height (m)</label>
+        <input type="number" id="bf_h"   value="0.0" step="0.1">
+        <label>Ka (pressure coeff)</label>
+        <input type="number" id="bf_Ka"  value="0.333" step="0.001">
+        <label>Unit weight dry (kN/m³)</label>
+        <input type="number" id="bf_uw_dry" value="18" step="0.1">
+        <label>Unit weight submerged (kN/m³)</label>
+        <input type="number" id="bf_uw_sub" value="10" step="0.1">
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. Ice -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🧊 Ice Pressure <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="ice_on" checked onchange="toggleSub('ice_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include ice pressure (HRV only)</label>
+      </div>
+      <div class="sub-fields" id="ice_sub">
+        <label>Ice pressure (kN/m)</label>
+        <input type="number" id="ice_p" value="100" step="1">
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Rock bolt -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🔩 Rock Bolt <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="rb_on" checked onchange="toggleSub('rb_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include rock bolts</label>
+      </div>
+      <div class="sub-fields" id="rb_sub">
+        <label>Force per metre width (kN/m)</label>
+        <input type="number" id="rb_force" value="144" step="1">
+        <label>Cover from heel (m)</label>
+        <input type="number" id="rb_cover" value="0.5" step="0.1">
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. Rock anchor -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      ⚓ Rock Anchor <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="ra_on" onchange="toggleSub('ra_sub',this)">
+          <span class="slider"></span></label>
+        <label>Include rock anchor</label>
+      </div>
+      <div class="sub-fields collapsed" id="ra_sub">
+        <label>Force per metre width (kN/m)</label>
+        <input type="number" id="ra_force" value="0" step="1">
+        <label>Cover from heel (m)</label>
+        <input type="number" id="ra_cover" value="2.0" step="0.1">
+      </div>
+    </div>
+  </div>
+
+  <!-- 10. Load cases to run -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      📋 Load Cases to Run <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="run_HRV" checked><span class="slider"></span></label>
+        <label>HRV — High Reservoir (normal)</label>
+      </div>
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="run_DFV" checked><span class="slider"></span></label>
+        <label>DFV — Design Flood</label>
+      </div>
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="run_MFV" checked><span class="slider"></span></label>
+        <label>MFV — Maximum Flood</label>
+      </div>
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="run_DFV_nb"><span class="slider"></span></label>
+        <label>DFV (no rock bolts)</label>
+      </div>
+    </div>
+  </div>
+
+  <button class="btn-run" id="run-btn" onclick="runCalc()">▶ Run Calculation</button>
+
+</aside>
+
+<!-- ══════════════════════════════════════════════════════
+     MAIN PANEL — results
+═══════════════════════════════════════════════════════════ -->
+<main>
+
+  <div id="error-box"></div>
+
+  <div id="placeholder">
+    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#2e6da4" stroke-width="1.5">
+      <path d="M3 21 L3 10 L12 3 L21 10 L21 21 Z"/>
+      <rect x="9" y="14" width="6" height="7"/>
+    </svg>
+    <p>Fill in the inputs on the left and click <strong>Run Calculation</strong></p>
+  </div>
+
+  <div id="spinner">
+    <div class="spin"></div>
+    <p>Running calculations…</p>
+  </div>
+
+  <div id="results-area" style="display:none">
+
+    <!-- Download button -->
+    <button class="btn-download" id="dl-btn" onclick="downloadExcel()" disabled>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="7 10 12 15 17 10"/>
+        <line x1="12" y1="15" x2="12" y2="3"/>
+      </svg>
+      Download Results as Excel
+    </button>
+
+    <!-- Geometry info bar -->
+    <div id="geom-bar" style="display:flex; margin-bottom:14px;">
+      <span>Toe elev: <b id="gb-toe"></b> m</span>
+      <span>Heel elev: <b id="gb-heel"></b> m</span>
+      <span>Base width: <b id="gb-L"></b> m</span>
+      <span>Dam height: <b id="gb-H"></b> m</span>
+    </div>
+
+    <!-- Tab bar (one tab per load case) -->
+    <div class="tab-bar" id="tab-bar"></div>
+
+    <!-- Tab panes filled dynamically -->
+    <div id="tab-panes"></div>
+
+  </div>
+
+</main>
+</div>
+
+<script>
+// ── Store last result for export ─────────────────────────
+let lastResponseData = null;
+
+// ── Download Excel ───────────────────────────────────────
+async function downloadExcel() {
+  if (!lastResponseData) return;
+  const btn = document.getElementById('dl-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating Excel…';
+
+  try {
+    const resp = await fetch('/export', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(lastResponseData),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'Export failed');
+    }
+    // Trigger browser download
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'dam_stability_results.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Export error: ' + err.message);
+  } finally {
+    btn.disabled    = false;
+    btn.innerHTML   = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+    </svg> Download Results as Excel`;
+  }
+}
+function toggleCard(head) {
+  const body   = head.nextElementSibling;
+  const toggle = head.querySelector('.toggle');
+  const open   = !body.classList.contains('collapsed');
+  body.classList.toggle('collapsed', open);
+  toggle.textContent = open ? '▸' : '▾';
+}
+
+// ── Show/hide sub-fields when toggle switches ────────────
+function toggleSub(id, cb) {
+  document.getElementById(id).classList.toggle('collapsed', !cb.checked);
+}
+// Initialise on load
+window.addEventListener('DOMContentLoaded', () => {
+  ['silt_on','ice_on','rb_on'].forEach(id => {
+    const cb = document.getElementById(id);
+    if (cb) {
+      const subId = id.replace('_on','_sub');
+      const sub = document.getElementById(subId);
+      if (sub) sub.classList.toggle('collapsed', !cb.checked);
+    }
+  });
+});
+
+// ── Tab switching ────────────────────────────────────────
+function switchTab(idx) {
+  document.querySelectorAll('.tab-btn' ).forEach((b,i) => b.classList.toggle('active', i===idx));
+  document.querySelectorAll('.tab-pane').forEach((p,i) => p.classList.toggle('active', i===idx));
+}
+
+// ── Parse coordinate textarea ────────────────────────────
+function parseCoords(text) {
+  return text.trim().split('\n')
+    .map(line => line.trim()).filter(Boolean)
+    .map(line => {
+      const parts = line.split(',').map(Number);
+      if (parts.length !== 2 || parts.some(isNaN))
+        throw new Error(`Bad coordinate line: "${line}"`);
+      return { x: parts[0], y: parts[1] };
+    });
+}
+
+// ── Number helper ────────────────────────────────────────
+function n(id)  { return parseFloat(document.getElementById(id).value); }
+function cb(id) { return document.getElementById(id).checked; }
+
+// ── Run ──────────────────────────────────────────────────
+async function runCalc() {
+  const btn = document.getElementById('run-btn');
+  btn.disabled = true;
+  document.getElementById('placeholder').style.display  = 'none';
+  document.getElementById('results-area').style.display = 'none';
+  document.getElementById('spinner').style.display      = 'block';
+  document.getElementById('error-box').style.display    = 'none';
+
+  try {
+    const coords = parseCoords(document.getElementById('coords').value);
+
+    const payload = {
+      coordinates:        coords,
+      upstream_top_point: { x: n('utp_x'), y: n('utp_y') },
+
+      HRV_us: n('HRV_us'), DFV_us: n('DFV_us'), MFV_us: n('MFV_us'),
+      HRV_ds: n('HRV_ds'), DFV_ds: n('DFV_ds'), MFV_ds: n('MFV_ds'),
+
+      unit_weight_dam:   n('uw_dam'),
+      unit_weight_water: n('uw_water'),
+      friction_coeff:    n('mu'),
+
+      drainage_include:            cb('drain_on'),
+      drainage_distance_from_heel: n('drain_dist'),
+      drainage_reduction_factor:   n('drain_rf'),
+
+      silt_include:               cb('silt_on'),
+      silt_height_us:             n('silt_h'),
+      silt_unit_weight_submerged: n('silt_uw'),
+      silt_phi_deg:               n('silt_phi'),
+
+      backfill_include_pressure:      cb('bf_p_on'),
+      backfill_include_weight:        cb('bf_w_on'),
+      backfill_height:                n('bf_h'),
+      backfill_coeff_pressure:        n('bf_Ka'),
+      backfill_unit_weight_dry:       n('bf_uw_dry'),
+      backfill_unit_weight_submerged: n('bf_uw_sub'),
+
+      ice_include:  cb('ice_on'),
+      ice_pressure: n('ice_p'),
+
+      rock_bolt_include:         cb('rb_on'),
+      rock_bolt_force_per_m:     n('rb_force'),
+      rock_bolt_cover_from_heel: n('rb_cover'),
+
+      rock_anchor_include:         cb('ra_on'),
+      rock_anchor_force_per_m:     n('ra_force'),
+      rock_anchor_cover_from_heel: n('ra_cover'),
+
+      run_HRV:          cb('run_HRV'),
+      run_DFV:          cb('run_DFV'),
+      run_MFV:          cb('run_MFV'),
+      run_DFV_no_bolts: cb('run_DFV_nb'),
+    };
+
+    const resp = await fetch('/calculate', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      throw new Error(data.detail || JSON.stringify(data));
+    }
+
+    renderResults(data);
+    lastResponseData = data;
+    document.getElementById('dl-btn').disabled = false;
+
+  } catch (err) {
+    document.getElementById('error-box').style.display = 'block';
+    document.getElementById('error-box').textContent   = '⚠ Error:\n' + err.message;
+  } finally {
+    document.getElementById('spinner').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+// ── Render results ───────────────────────────────────────
+function renderResults(data) {
+  const geom = data.geometry;
+
+  // Geometry bar
+  document.getElementById('gb-toe' ).textContent = geom.toe_elevation;
+  document.getElementById('gb-heel').textContent = geom.heel_elevation;
+  document.getElementById('gb-L'   ).textContent = geom.base_length_horizontal;
+  document.getElementById('gb-H'   ).textContent = geom.dam_height;
+
+  // Warnings
+  const warnHtml = geom.warnings.map(w =>
+    `<div class="warning">⚠ ${w}</div>`).join('');
+
+  const tabBar   = document.getElementById('tab-bar');
+  const tabPanes = document.getElementById('tab-panes');
+  tabBar.innerHTML = ''; tabPanes.innerHTML = '';
+
+  data.results.forEach((res, idx) => {
+    // Tab button
+    const btn = document.createElement('button');
+    btn.className  = 'tab-btn' + (idx===0 ? ' active' : '');
+    btn.textContent = res.case_name;
+    btn.onclick    = () => switchTab(idx);
+    tabBar.appendChild(btn);
+
+    // ── KPI summary ──────────────────────────────────────
+    const fsSlideOk  = res.FS_sliding   >= 1.5;
+    const fsOvOk     = res.FS_overturning >= 1.5;
+    const midOk      = res.in_middle_third;
+    const heelOk     = res.sigma_heel   >= 0;
+
+    const kpi = (val, label, ok) => `
+      <div class="kpi ${ok===null ? '' : ok ? 'ok' : 'fail'}">
+        <div class="val">${val}</div>
+        <div class="lbl">${label}</div>
+      </div>`;
+
+    const summaryHtml = `
+      <div class="summary-grid">
+        ${kpi(res.FS_sliding   >= 9998 ? '∞' : res.FS_sliding.toFixed(3),   'FS Sliding',    fsSlideOk)}
+        ${kpi(res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3), 'FS Overturning', fsOvOk)}
+        ${kpi(res.in_middle_third ? '✓ OK' : '✗ Outside',
+              res.resultant_check_type, midOk)}
+        ${kpi(res.sigma_toe.toFixed(1)  + ' kN/m²', 'σ Toe',  res.sigma_toe  >= 0)}
+        ${kpi(res.sigma_heel.toFixed(1) + ' kN/m²', 'σ Heel', heelOk)}
+        ${kpi(res.x_resultant.toFixed(3) + ' m',    'Resultant x from toe', null)}
+        ${kpi(res.eccentricity.toFixed(3) + ' m',   'Eccentricity e', null)}
+        ${kpi(res.tension_length > 0.001
+              ? res.tension_length.toFixed(3) + ' m' : '—',
+              'Tension zone (from heel)', res.tension_length < 0.001)}
+      </div>`;
+
+    // ── Force table ──────────────────────────────────────
+    const rows = res.forces.map(r => `
+      <tr class="${r.stabilising ? 'stabilising' : 'destab'}">
+        <td>${r.name} ${r.stabilising ? '<span style="color:#27ae60;font-size:.7rem">▲S</span>'
+                                       : '<span style="color:#e74c3c;font-size:.7rem">▼D</span>'}</td>
+        <td>${r.V.toFixed(2)}</td>
+        <td>${r.H.toFixed(2)}</td>
+        <td>${r.x_from_toe.toFixed(3)}</td>
+        <td>${r.y_from_toe.toFixed(3)}</td>
+        <td>${r.M_res.toFixed(2)}</td>
+        <td>${r.M_ov.toFixed(2)}</td>
+      </tr>`).join('');
+
+    const tableHtml = `
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Force</th>
+              <th>V (kN/m)</th>
+              <th>H (kN/m)</th>
+              <th>x from toe (m)</th>
+              <th>y (m)</th>
+              <th>M_res (kNm/m)</th>
+              <th>M_ov (kNm/m)</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+            <tr class="total">
+              <td>RESULTANT</td>
+              <td>${res.sum_V.toFixed(2)}</td>
+              <td>${res.H_net.toFixed(2)}</td>
+              <td colspan="2"></td>
+              <td>${res.sum_M_res.toFixed(2)}</td>
+              <td>${res.sum_M_ov.toFixed(2)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>`;
+
+    // ── Plot ─────────────────────────────────────────────
+    const plotHtml = `<img class="plot-img" src="data:image/png;base64,${res.plot_base64}" alt="Dam plot">`;
+
+    // ── Assemble pane ────────────────────────────────────
+    const pane = document.createElement('div');
+    pane.className = 'tab-pane' + (idx===0 ? ' active' : '');
+    pane.innerHTML = `
+      ${idx===0 ? warnHtml : ''}
+      <h3 style="margin-bottom:12px;color:#1a3a5c">Load Case: ${res.case_name}</h3>
+      ${summaryHtml}
+      <div class="card" style="margin-bottom:18px">
+        <div class="card-head">📊 Force Table</div>
+        <div class="card-body" style="padding:0">${tableHtml}</div>
+      </div>
+      <div class="card">
+        <div class="card-head">🖼 Stability Diagram</div>
+        <div class="card-body" style="text-align:center">${plotHtml}</div>
+      </div>`;
+    tabPanes.appendChild(pane);
+  });
+
+  document.getElementById('results-area').style.display = 'block';
+}
+</script>
+</body>
+</html>
