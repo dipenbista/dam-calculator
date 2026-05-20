@@ -226,24 +226,22 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-0, 101
-2, 101
-4, 106
-5, 108
-5, 109
-5.4, 109
-5.4, 108
-7, 108
-8, 107
-12, 100</textarea>
+0, 100
+0, 100
+0, 100
+0, 107
+0.3, 107
+0.3, 106
+1.5, 106
+6.3, 100</textarea>
       <div class="row2">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="5" step="0.1">
+          <input type="number" id="utp_x" value="0" step="0.1">
         </div>
         <div>
           <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="109" step="0.1">
+          <input type="number" id="utp_y" value="107" step="0.1">
         </div>
       </div>
     </div>
@@ -257,18 +255,18 @@
     <div class="card-body">
       <label>HRV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
+        <input type="number" id="HRV_us" value="106.5" step="0.1" placeholder="US">
         <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
+        <input type="number" id="DFV_us" value="107" step="0.1" placeholder="US">
         <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
-        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
+        <input type="number" id="MFV_us" value="108.5" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="101" step="0.1" placeholder="DS">
       </div>
     </div>
   </div>
@@ -315,7 +313,7 @@
     </div>
     <div class="card-body">
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="silt_on" checked onchange="toggleSub('silt_sub',this)">
+        <label class="switch"><input type="checkbox" id="silt_on" onchange="toggleSub('silt_sub',this)">
           <span class="slider"></span></label>
         <label>Include silt</label>
       </div>
@@ -492,7 +490,7 @@
         <label>MFV — Maximum Flood</label>
       </div>
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="run_DFV_nb"><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="run_DFV_nb" checked><span class="slider"></span></label>
         <label>DFV (no rock bolts)</label>
       </div>
     </div>
