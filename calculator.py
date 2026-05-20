@@ -210,27 +210,82 @@ def make_force(name, V=0.0, H=0.0, x=0.0, y=0.0, stabilising=True):
 
 
 def build_uplift_pressure_polygon(L, h_us_u, h_ds_u, drainage, Lt):
+    """
+    Build uplift pressure polygon as a list of (x_from_toe, head).
+
+    Coordinate system (UNCHANGED):
+      x = 0.0 → downstream toe
+      x = L   → upstream heel
+    """
+
+    # End of compression zone (from toe)
     x_cs = L - Lt
-    pts  = []
+
+    pts = []
+
+    # ─────────────────────────────────────────────
+    # NO DRAINAGE
+    # ─────────────────────────────────────────────
     if not drainage.include:
+
         if Lt > 0.0:
-            pts = [(L, h_us_u), (x_cs, h_us_u), (0.0, h_ds_u)]
+            pts = [
+                (L,    h_us_u),
+                (x_cs, h_us_u),
+                (0.0,  h_ds_u),
+            ]
         else:
-            pts = [(L, h_us_u), (0.0, h_ds_u)]
+            pts = [
+                (L,   h_us_u),
+                (0.0, h_ds_u),
+            ]
+
+        pts.sort(key=lambda p: p[0])
+        return pts
+
+    # ─────────────────────────────────────────────
+    # WITH DRAINAGE
+    # ─────────────────────────────────────────────
+    d  = drainage.distance_from_heel
+    rf = drainage.reduction_factor
+
+    # Drain position (from toe)
+    xd = L - d
+
+    # Head at drain
+    hd = h_ds_u + rf * (h_us_u - h_ds_u)
+
+    # ── CASE 1: NO TENSION ───────────────────────
+    if Lt <= 0.0:
+
+        pts = [
+            (L,  h_us_u),
+            (xd, hd),
+            (0.0, h_ds_u),
+        ]
+
+    # ── CASE 2: TENSION PRESENT ──────────────────
     else:
-        d  = drainage.distance_from_heel
-        rf = drainage.reduction_factor
-        hd = h_ds_u + rf * (h_us_u - h_ds_u)
-        xd = L - d
-        if Lt == 0.0:
-            pts = [(L, h_us_u), (xd, hd), (0.0, h_ds_u)]
-        elif Lt < xd:
-            pts = [(L, h_us_u), (x_cs, h_us_u), (0.0, h_ds_u)]
+
+        # Drain in compression zone → effective
+        if xd <= x_cs:
+            pts = [
+                (L,    h_us_u),
+                (x_cs, h_us_u),
+                (xd,   hd),
+                (0.0,  h_ds_u),
+            ]
+
+        # Drain in tension zone → ineffective
         else:
-            pts = [(L, h_us_u), (x_cs, h_us_u), (xd, hd), (0.0, h_ds_u)]
+            pts = [
+                (L,    h_us_u),
+                (x_cs, h_us_u),
+                (0.0,  h_ds_u),
+            ]
+
     pts.sort(key=lambda p: p[0])
     return pts
-
 
 # =============================================================================
 # FORCE CALCULATIONS
@@ -442,7 +497,7 @@ def compute_applied(geom, app):
     for i,(F,dist) in enumerate(app.vertical_forces):
         forces.append(make_force(f'Applied V{i+1}', V=F, x=heel_x-dist, stabilising=(F>=0)))
     for i,(F,h) in enumerate(app.horizontal_forces):
-        forces.append(make_force(f'Applied H{i+1}', H=abs(F), x=heel_x, y=h, stabilising=(F<=0)))
+        forces.append(make_force(f'Applied H{i+1}', H=abs(F), x=0.0, y=h, stabilising=(F<=0)))
     return forces
 
 
@@ -678,7 +733,7 @@ def plot_to_base64(res, geom, mat, drainage, silt,
             ax.text(x_sf+0.05*(x_hi-x_sf), y_silt+dam_top*0.02,
                     f'Silt h={silt.height_us:.2f} m', fontsize=8,
                     color='saddlebrown', fontstyle='italic', zorder=6)
-
+    
     # Pressure diagrams
     def draw_pressure_diagram(h_act, h_ot, base_y, face_x, side, color):
         if h_act < 1e-9: return
@@ -715,9 +770,31 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     up_xs  = [x for x,_ in up_pts]
     up_pws = [p2w(gw*h) for _,h in up_pts]
     ref_y  = y_base_ref
-    ax.fill(up_xs + list(reversed(up_xs)),
-            [ref_y-pw for pw in up_pws] + [ref_y]*len(up_xs),
-            color='orange', alpha=0.25, zorder=2)
+    # ─────────────────────────────────────────────
+    # CORRECT UPLIFT POLYGON PLOTTING
+    # (preserves tension plateau and drainage kink)
+    # ─────────────────────────────────────────────
+
+    poly_xu = []
+    poly_yu = []
+
+    # Bottom edge: reference line (toe → heel)
+    for x, _ in up_pts:
+        poly_xu.append(x)
+        poly_yu.append(ref_y)
+
+    # Top edge: uplift curve (heel → toe)
+    for x, h in reversed(up_pts):
+        poly_xu.append(x)
+        poly_yu.append(ref_y - p2w(gw * h))
+
+    ax.fill(
+        poly_xu,
+        poly_yu,
+        color='orange',
+        alpha=0.25,
+        zorder=2
+    )
     ax.plot(up_xs, [ref_y-pw for pw in up_pws], color='darkorange', lw=1.5, zorder=3)
     for xv in np.linspace(0.0, L, 10):
         pw = np.interp(xv, up_xs, up_pws)
