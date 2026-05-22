@@ -579,67 +579,6 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
     return forces
 
 
-def generate_messages(case_name, geom, mat, wl_us, wl_ds,
-                      drainage, silt, rock_bolt, ice,
-                      res, include_rock_bolts, tension_L=0.0):
-    """
-    Produce a concise list of engineering messages.
-    Each message: { "type": "info"|"warning"|"alert", "text": "..." }
-    """
-    msgs = []
-    L    = geom.base_length_horizontal
-    tL   = tension_L
-    h_us = wl_us - geom.heel_elevation
-    fs   = res['FS_sliding']
-
-    # ── 1. Rock bolts disabled by height limit ───────────────────────────────
-    if (rock_bolt.include and include_rock_bolts
-            and geom.dam_top_elevation_rel > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
-        msgs.append({"type": "warning",
-                     "text": (f"Rock bolts NOT included: dam height "
-                              f"{geom.dam_top_elevation_rel:.2f} m exceeds the "
-                              f"{MAX_DAM_HEIGHT_FOR_ROCK_BOLTS:.1f} m limit for use of rock bolts in NVE's "
-                              f"retningslinjer for betongdammer.")})
-
-    # ── 2. Inclined base ─────────────────────────────────────────────────────
-    if abs(geom.heel_elevation - geom.toe_elevation) > 0.05:
-        msgs.append({"type": "info",
-                     "text": (f"Inclined base: heel elevation "
-                              f"{geom.heel_elevation:.2f} m, toe elevation "
-                              f"{geom.toe_elevation:.2f} m. Uplift and base "
-                              f"stress are computed on the horizontal projection "
-                              f"(L = {L:.3f} m).")})
-
-    # ── 3. Drainage in tension zone → ineffective ────────────────────────────
-    if drainage.include and tL > 1e-3:
-        xd   = L - drainage.distance_from_heel   # drain position from toe
-        x_cs = L - tL                            # start of compression zone from toe
-        if xd > x_cs:
-            msgs.append({"type": "warning",
-                         "text": (f"Drainage curtain is within the tension zone "
-                                  f"(drain at {xd:.2f} m from toe; compression "
-                                  f"zone starts at {x_cs:.3f} m from toe). "
-                                  f"Drain is ineffective — uplift calculated "
-                                  f"without drainage reduction.")})
-
-    # ── 4. Silt height above water level ────────────────────────────────────
-    if silt.include and silt.height_us > 0 and silt.height_us > h_us + 1e-3:
-        msgs.append({"type": "warning",
-                     "text": (f"Silt height ({silt.height_us:.2f} m) exceeds "
-                              f"upstream water depth ({max(h_us, 0):.2f} m). "
-                              f"Only submerged silt is calculated — "
-                              f"dry silt above the water level is ignored.")})
-
-    # ── 5. FS_sliding below 1.0 ─────────────────────────────────────────────
-    if fs < 1.0:
-        msgs.append({"type": "alert",
-                     "text": (f"CRITICAL: Sliding factor of safety ({fs:.3f}) "
-                              f"is below 1.0 — the dam will slide under "
-                              f"this load case.")})
-
-    return msgs
-
-
 def run_load_case(case_name, geom, mat, wl_us, wl_ds,
                   drainage, silt, backfill, ice,
                   rock_bolt, rock_anchor, applied,
@@ -674,14 +613,8 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
         res['in_middle_third']      = abs(res['eccentricity']) <= L/6
         res['resultant_check_type'] = "Middle third"
 
-    messages = generate_messages(
-        case_name, geom, mat, wl_us, wl_ds,
-        drainage, silt, rock_bolt, ice, res,
-        include_rock_bolts, tension_L)
-
     res.update(case_name=case_name, tension_length=tension_L,
-               wl_us=wl_us, wl_ds=wl_ds, forces=forces,
-               messages=messages)
+               wl_us=wl_us, wl_ds=wl_ds, forces=forces)
     return res
 
 
