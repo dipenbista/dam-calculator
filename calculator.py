@@ -46,13 +46,19 @@ class DamGeometry:
 
         y_vals = [y for _, y in coords]
         y_min  = min(y_vals)
-        tol    = 0.1
+        height_span = max(y_vals) - y_min
+        tol = max(0.5, height_span * 0.15)
         base_candidates = [(x, y) for x, y in coords if y <= y_min + tol]
         if len(base_candidates) < 2:
-            raise ValueError("Could not identify base vertices for heel/toe.")
+            raise ValueError(
+                "Could not identify base vertices for heel/toe. "
+                "Make sure the polygon includes at least two points near "
+                "the base of the dam.")
 
-        toe  = max(base_candidates, key=lambda p: abs(p[0] - utp[0]))
+        # Heel: base candidate closest (in x) to utp
         heel = min(base_candidates, key=lambda p: abs(p[0] - utp[0]))
+        # Toe:  base candidate farthest (in x) from utp
+        toe  = max(base_candidates, key=lambda p: abs(p[0] - utp[0]))
 
         self.heel_elevation = heel[1]
         self.toe_elevation  = toe[1]
@@ -524,7 +530,7 @@ def moments_and_stability(forces, geom, mat):
     net_M     = sum_M_res - sum_M_ov
     H_dest    = sum(r['H'] for r in rows if not r['stabilising'])
     H_stab    = sum(r['H'] for r in rows if     r['stabilising'])
-    H_net     = max(H_dest-H_stab, 0.0)
+    H_net_horiz = H_dest - H_stab   # net horizontal (downstream +ve)
 
     x_res = net_M/sum_V if abs(sum_V)>1e-6 else L/2
     e     = L/2 - x_res
@@ -535,9 +541,32 @@ def moments_and_stability(forces, geom, mat):
     else:
         sigma_toe = sigma_heel = 0.0
 
-    V_comp   = max(sum_V, 0.0)
-    FS_slide = (mat.friction_coeff*V_comp)/H_net if H_net>1e-6 else float('inf')
-    FS_ov    = sum_M_res/sum_M_ov if sum_M_ov>1e-6 else float('inf')
+    # ── Sliding on inclined base ─────────────────────────────────────────────
+    # Foundation slope: positive alpha means heel is higher than toe
+    heel_x, heel_y = geom.upstream_heel
+    toe_y          = geom.downstream_toe[1]
+    dx       = heel_x            # horizontal projection of base
+    dy       = heel_y - toe_y    # rise from toe to heel (+ve = heel higher)
+    base_len = np.hypot(dx, dy)
+    sin_a    = dy / base_len if base_len > 1e-9 else 0.0
+    cos_a    = dx / base_len if base_len > 1e-9 else 1.0
+
+    # Resolve total resultant onto base plane
+    # N = component perpendicular to base (compression +ve)
+    # T = component parallel to base (downstream = destabilising +ve)
+    F_V =  sum_V         # net vertical, downward +ve
+    F_H =  H_net_horiz   # net horizontal, downstream +ve
+    N   =  F_V * cos_a + F_H * sin_a
+    T   =  F_H * cos_a - F_V * sin_a
+
+    mu = mat.friction_coeff
+    if T > 1e-6:
+        FS_slide = mu * max(N, 0.0) / T
+    elif T <= 1e-6:
+        FS_slide = float('inf')   # shear towards heel or negligible
+
+    H_net = max(H_net_horiz, 0.0)   # keep for display / overturning
+    FS_ov = sum_M_res/sum_M_ov if sum_M_ov>1e-6 else float('inf')
 
     return dict(rows=rows, sum_V=sum_V, H_net=H_net,
                 sum_M_res=sum_M_res, sum_M_ov=sum_M_ov, net_M=net_M,
@@ -545,8 +574,9 @@ def moments_and_stability(forces, geom, mat):
                 in_middle_third=abs(e)<=L/6,
                 heel_tension=sigma_heel<-1e-4,
                 sigma_toe=sigma_toe, sigma_heel=sigma_heel,
-                FS_sliding=FS_slide, FS_overturning=FS_ov)
-
+                FS_sliding=FS_slide, FS_overturning=FS_ov,
+                foundation_angle_deg=float(np.degrees(np.arctan2(dy, dx))),
+                N_foundation=float(N), T_foundation=float(T))
 
 def assemble_forces(geom, mat, wl_us, wl_ds,
                     drainage, silt, backfill, ice,
@@ -565,11 +595,13 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
     f = compute_ice(geom, ice, wl_us)
     if f: forces.append(f)
 
-    if geom.dam_top_elevation_rel > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS and rock_bolt.include:
+    # Height limit uses HRV head (depth of water above heel), not raw dam height
+    _rb_head = wl_us - geom.heel_elevation
+    if _rb_head > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS and rock_bolt.include:
         pass  # silently skip — warning returned separately
 
     if (include_rock_bolts and rock_bolt.include
-            and geom.dam_top_elevation_rel <= MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+            and _rb_head <= MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
         f = compute_rock_bolt(geom, rock_bolt)
         if f: forces.append(f)
 
@@ -577,6 +609,69 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
     if f: forces.append(f)
     forces.extend(compute_applied(geom, applied))
     return forces
+
+
+def generate_messages(case_name, geom, mat, wl_us, wl_ds,
+                      drainage, silt, rock_bolt, ice,
+                      res, include_rock_bolts, tension_L=0.0):
+    """
+    Produce a concise list of engineering messages.
+    Each message: { "type": "info"|"warning"|"alert", "text": "..." }
+    """
+    msgs = []
+    L    = geom.base_length_horizontal
+    tL   = tension_L
+    h_us = wl_us - geom.heel_elevation
+    fs   = res['FS_sliding']
+
+    # ── 1. Rock bolts disabled by height limit ───────────────────────────────
+    # Height check: measured from HRV level down to heel elevation (water depth)
+    hrv_head = wl_us - geom.heel_elevation
+    if (rock_bolt.include and include_rock_bolts
+            and hrv_head > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+        msgs.append({"type": "warning",
+                     "text": (f"Rock bolts NOT included: HRV water depth above heel "
+                              f"({hrv_head:.2f} m) exceeds the "
+                              f"{MAX_DAM_HEIGHT_FOR_ROCK_BOLTS:.1f} m limit for use of rock bolts per NVE's "
+                              f"retningslinjer for betongdammer.")})
+
+    # ── 2. Inclined base ─────────────────────────────────────────────────────
+    if abs(geom.heel_elevation - geom.toe_elevation) > 0.05:
+        msgs.append({"type": "info",
+                     "text": (f"Inclined base: heel elevation "
+                              f"{geom.heel_elevation:.2f} m, toe elevation "
+                              f"{geom.toe_elevation:.2f} m. Uplift and base "
+                              f"stress are computed on the horizontal projection "
+                              f"(L = {L:.3f} m).")})
+
+    # ── 3. Drainage in tension zone → ineffective ────────────────────────────
+    if drainage.include and tL > 1e-3:
+        xd   = L - drainage.distance_from_heel   # drain position from toe
+        x_cs = L - tL                            # start of compression zone from toe
+        if xd > x_cs:
+            msgs.append({"type": "warning",
+                         "text": (f"Drainage curtain is within the tension zone "
+                                  f"(drain at {xd:.2f} m from toe; compression "
+                                  f"zone starts at {x_cs:.3f} m from toe). "
+                                  f"Drain is ineffective — uplift calculated "
+                                  f"without drainage reduction.")})
+
+    # ── 4. Silt height above water level ────────────────────────────────────
+    if silt.include and silt.height_us > 0 and silt.height_us > h_us + 1e-3:
+        msgs.append({"type": "warning",
+                     "text": (f"Silt height ({silt.height_us:.2f} m) exceeds "
+                              f"upstream water depth ({max(h_us, 0):.2f} m). "
+                              f"Only submerged silt is calculated — "
+                              f"dry silt above the water level is ignored.")})
+
+    # ── 5. FS_sliding below 1.0 ─────────────────────────────────────────────
+    if fs < 1.0:
+        msgs.append({"type": "alert",
+                     "text": (f"CRITICAL: Sliding factor of safety ({fs:.3f}) "
+                              f"is below 1.0 — the dam will slide under "
+                              f"this load case.")})
+
+    return msgs
 
 
 def run_load_case(case_name, geom, mat, wl_us, wl_ds,
@@ -613,8 +708,14 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
         res['in_middle_third']      = abs(res['eccentricity']) <= L/6
         res['resultant_check_type'] = "Middle third"
 
+    messages = generate_messages(
+        case_name, geom, mat, wl_us, wl_ds,
+        drainage, silt, rock_bolt, ice, res,
+        include_rock_bolts, tension_L)
+
     res.update(case_name=case_name, tension_length=tension_L,
-               wl_us=wl_us, wl_ds=wl_ds, forces=forces)
+               wl_us=wl_us, wl_ds=wl_ds, forces=forces,
+               messages=messages)
     return res
 
 

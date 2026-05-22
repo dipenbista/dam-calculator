@@ -135,6 +135,7 @@ class CaseResult(BaseModel):
     FS_overturning:       float
     tension_length:       float
     forces:               List[ForceRow]
+    messages:             List[dict]   # engineering messages for this case
     plot_base64:          str          # PNG image encoded as base64
 
 class GeometryInfo(BaseModel):
@@ -142,7 +143,7 @@ class GeometryInfo(BaseModel):
     heel_elevation:         float
     base_length_horizontal: float
     dam_height:             float
-    warnings:               List[str]
+    warnings:               List[str]   # kept for backward compat (now empty)
 
 class CalculationResponse(BaseModel):
     geometry: GeometryInfo
@@ -204,7 +205,7 @@ def calculate(req: LoadCaseRequest):
         if geom.dam_top_elevation_rel > 7.0 and rock_bolt.include:
             warnings.append(
                 f"Rock bolts disabled by regulation: dam height "
-                f"{geom.dam_top_elevation_rel:.2f} m > 7.0 m (Norwegian guideline).")
+                f"{geom.dam_top_elevation_rel:.2f} m > 7.0 m (NVE's retningslinjer for betongdammer).")
 
         # ── Which cases to run ────────────────────────────────────────
         cases = []
@@ -275,6 +276,7 @@ def calculate(req: LoadCaseRequest):
                 FS_overturning       = safe(res['FS_overturning']),
                 tension_length       = safe(res['tension_length']),
                 forces               = forces_out,
+                messages             = res.get('messages', []),
                 plot_base64          = plot_b64,
             ))
 
@@ -567,8 +569,45 @@ def export_excel(data: ExportRequest):
             for i, w in enumerate(ft_widths, ft_col_start):
                 ws.column_dimensions[get_column_letter(i)].width = w
 
+            # ── Messages / notices block ─────────────────────────────
+            msg_start = tot_row + 2
+            if res.messages:
+                # Header
+                ws.merge_cells(f"A{msg_start}:H{msg_start}")
+                mh = ws[f"A{msg_start}"]
+                mh.value     = "ENGINEERING NOTICES"
+                mh.font      = Font(bold=True, size=10, color=WHITE, name="Calibri")
+                mh.fill      = hfill(BLUE_MID)
+                mh.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[msg_start].height = 20
+                msg_start += 1
+
+                TYPE_FILL  = {"info": "D6E8F7", "warning": "FFF3CD", "alert": "FAD7D7"}
+                TYPE_COLOR = {"info": "1A3A5C", "warning": "7A5000", "alert": "8B1A1A"}
+                TYPE_ICON  = {"info": "ℹ",      "warning": "⚠",      "alert": "🚨"}
+
+                for m in res.messages:
+                    mtype = m.get("type", "info") if isinstance(m, dict) else "info"
+                    mtext = m.get("text", str(m)) if isinstance(m, dict) else str(m)
+                    icon  = TYPE_ICON.get(mtype, "ℹ")
+                    fgColor = TYPE_FILL.get(mtype, "D6E8F7")
+                    txtColor = TYPE_COLOR.get(mtype, "1A3A5C")
+
+                    ws.merge_cells(f"A{msg_start}:H{msg_start}")
+                    mc = ws[f"A{msg_start}"]
+                    mc.value     = f"{icon}  {mtext}"
+                    mc.font      = Font(name="Calibri", size=9, color=txtColor)
+                    mc.fill      = hfill(fgColor)
+                    mc.alignment = Alignment(horizontal="left", vertical="center",
+                                             wrap_text=True)
+                    mc.border    = thin_border
+                    ws.row_dimensions[msg_start].height = 30
+                    msg_start += 1
+
+                msg_start += 1  # blank spacer row
+
             # ── Insert plot image ─────────────────────────────────────
-            img_row = tot_row + 2
+            img_row = msg_start
             if res.plot_base64:
                 img_bytes = base64.b64decode(res.plot_base64)
                 img_buf   = io.BytesIO(img_bytes)
