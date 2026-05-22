@@ -135,6 +135,7 @@ class CaseResult(BaseModel):
     FS_overturning:       float
     tension_length:       float
     forces:               List[ForceRow]
+    messages:             List[dict]   # engineering messages for this case
     plot_base64:          str          # PNG image encoded as base64
 
 class GeometryInfo(BaseModel):
@@ -142,7 +143,7 @@ class GeometryInfo(BaseModel):
     heel_elevation:         float
     base_length_horizontal: float
     dam_height:             float
-    warnings:               List[str]
+    warnings:               List[str]   # kept for backward compat (now empty)
 
 class CalculationResponse(BaseModel):
     geometry: GeometryInfo
@@ -275,6 +276,7 @@ def calculate(req: LoadCaseRequest):
                 FS_overturning       = safe(res['FS_overturning']),
                 tension_length       = safe(res['tension_length']),
                 forces               = forces_out,
+                messages             = res.get('messages', []),
                 plot_base64          = plot_b64,
             ))
 
@@ -446,8 +448,48 @@ def export_excel(data: ExportRequest):
 
             ws_sum.row_dimensions[r_idx].height = 18
 
-        # Column widths
-        col_widths = [18, 11, 15, 16, 15, 17, 14, 14, 15, 13]
+        # ── Messages column in summary (column K) ──────────────────────
+        msg_col = 11
+        mh = ws_sum.cell(row=4, column=msg_col, value="Notes / Warnings")
+        mh.font      = Font(bold=True, color=WHITE, name="Calibri", size=9)
+        mh.fill      = hfill(BLUE_MID)
+        mh.alignment = Alignment(horizontal="center", vertical="center",
+                                 wrap_text=True)
+        mh.border    = thin_border
+
+        msg_fill_map = {
+            "info":    (hfill("D6E8F7"), "1A3A5C"),   # blue
+            "warning": (hfill("FFF8E1"), "7A5800"),   # amber
+            "alert":   (hfill("FDECEA"), "7B1A1A"),   # red
+        }
+        for r_idx, res in enumerate(data.results, 5):
+            msgs = res.messages or []
+            if msgs:
+                lines = []
+                icons = {"info": "ℹ", "warning": "⚠", "alert": "✖"}
+                for m in msgs:
+                    lines.append(f"{icons.get(m['type'],'•')} {m['text']}")
+                cell_text = "\n".join(lines)
+                # Use highest severity fill
+                severity = ("alert"   if any(m['type']=="alert"   for m in msgs) else
+                            "warning" if any(m['type']=="warning" for m in msgs) else
+                            "info")
+                fill_c, font_color = msg_fill_map[severity]
+            else:
+                cell_text = "—"
+                fill_c, font_color = None, "666666"
+
+            mc = ws_sum.cell(row=r_idx, column=msg_col, value=cell_text)
+            mc.font      = Font(name="Calibri", size=8, color=font_color)
+            mc.alignment = Alignment(horizontal="left", vertical="top",
+                                     wrap_text=True)
+            mc.border    = thin_border
+            if fill_c: mc.fill = fill_c
+            ws_sum.row_dimensions[r_idx].height = max(
+                18, 15 * max(1, len(msgs)))
+
+        # Column widths (now including K)
+        col_widths = [18, 11, 15, 16, 15, 17, 14, 14, 15, 13, 48]
         for i, w in enumerate(col_widths, 1):
             ws_sum.column_dimensions[get_column_letter(i)].width = w
 
@@ -508,8 +550,50 @@ def export_excel(data: ExportRequest):
             ws.column_dimensions['A'].width = 22
             ws.column_dimensions['B'].width = 14
 
-            # ── Force table (starts at row 3, cols D onwards) ─────────
-            ft_start_row = 3
+            # ── Messages block (rows after KPI, cols A–B) ─────────────
+            kpi_end_row  = 3 + len(kpis)    # last KPI row
+            msg_start_row = kpi_end_row + 2  # leave one blank row gap
+
+            msg_fill_map2 = {
+                "info":    (hfill("D6E8F7"), "1A3A5C"),
+                "warning": (hfill("FFF8E1"), "7A5800"),
+                "alert":   (hfill("FDECEA"), "7B1A1A"),
+            }
+            msg_icons = {"info": "ℹ", "warning": "⚠", "alert": "✖"}
+
+            case_msgs = res.messages or []
+            if case_msgs:
+                # Section header
+                ws.merge_cells(f"A{msg_start_row}:B{msg_start_row}")
+                mh2 = ws[f"A{msg_start_row}"]
+                mh2.value     = "NOTES & WARNINGS"
+                mh2.font      = Font(bold=True, size=9, color=WHITE, name="Calibri")
+                mh2.fill      = hfill(BLUE_MID)
+                mh2.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[msg_start_row].height = 18
+
+                for mi, m in enumerate(case_msgs, msg_start_row + 1):
+                    fill_c2, font_color2 = msg_fill_map2.get(
+                        m['type'], (None, "000000"))
+                    icon = msg_icons.get(m['type'], "•")
+                    ws.merge_cells(f"A{mi}:B{mi}")
+                    mc2 = ws[f"A{mi}"]
+                    mc2.value     = f"{icon}  {m['text']}"
+                    mc2.font      = Font(name="Calibri", size=9,
+                                        color=font_color2,
+                                        bold=(m['type']=="alert"))
+                    mc2.alignment = Alignment(horizontal="left",
+                                              vertical="center",
+                                              wrap_text=True)
+                    mc2.border    = thin_border
+                    if fill_c2: mc2.fill = fill_c2
+                    ws.row_dimensions[mi].height = 30
+
+                ft_start_row = msg_start_row + len(case_msgs) + 2
+            else:
+                ft_start_row = msg_start_row
+
+            # ── Force table (starts after messages block, cols D onwards) ──
             ft_col_start = 4   # column D
 
             force_headers = ["Force", "Stab/Dest",
