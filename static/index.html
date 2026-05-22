@@ -23,13 +23,40 @@
 
   /* ── Sidebar (inputs) ─────────────────────────────────── */
   aside {
-    width: 380px; min-width: 320px; background: #fff;
+    width: 360px; min-width: 300px; background: #fff;
     border-right: 1px solid #dde3ec;
     overflow-y: auto; padding: 20px 18px 40px;
+    flex-shrink: 0;
+  }
+
+  /* ── Live preview panel ───────────────────────────────── */
+  #live-panel {
+    width: 340px; min-width: 280px; background: #f7f9fc;
+    border-right: 1px solid #dde3ec;
+    display: flex; flex-direction: column;
+    padding: 14px 12px; flex-shrink: 0; overflow-y: auto;
+  }
+  #live-panel h4 {
+    font-size: 0.82rem; font-weight: 700; color: #1a3a5c;
+    margin-bottom: 8px; letter-spacing: .3px;
+    text-transform: uppercase;
+  }
+  #live-canvas {
+    width: 100%; border-radius: 5px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.10);
+    background: #fff;
+  }
+  .live-legend {
+    margin-top: 8px; font-size: 0.72rem; color: #555;
+    display: flex; flex-wrap: wrap; gap: 6px 14px;
+  }
+  .live-legend span { display: flex; align-items: center; gap: 4px; }
+  .live-legend .dot {
+    width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0;
   }
 
   /* ── Main panel (results) ─────────────────────────────── */
-  main { flex: 1; padding: 24px; overflow-y: auto; }
+  main { flex: 1; padding: 24px; overflow-y: auto; min-width: 0; }
 
   /* ── Section cards ────────────────────────────────────── */
   .card {
@@ -179,6 +206,19 @@
     font-size: 0.83rem; white-space: pre-wrap; margin-bottom: 16px;
   }
 
+  /* ── Message boxes ────────────────────────────────────── */
+  .msg-panel { margin-bottom: 18px; }
+  .msg {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 9px 13px; border-radius: 6px; margin-bottom: 7px;
+    font-size: 0.81rem; line-height: 1.5; border: 1px solid transparent;
+  }
+  .msg-icon { font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+  .msg.info    { background:#eaf3fb; border-color:#b0cee8; color:#1a3a5c; }
+  .msg.warning { background:#fff8e1; border-color:#ffe082; color:#7a5800; }
+  .msg.alert   { background:#fdecea; border-color:#f5c6cb; color:#7b1a1a;
+                 font-weight:600; }
+
   /* ── Download button ──────────────────────────────────── */
   .btn-download {
     display: inline-flex; align-items: center; gap: 8px;
@@ -226,22 +266,24 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-0, 100
-0, 100
-0, 100
-0, 107
-0.3, 107
-0.3, 106
-1.5, 106
-6.3, 100</textarea>
+0, 101
+2, 101
+4, 106
+5, 108
+5, 109
+5.4, 109
+5.4, 108
+7, 108
+8, 107
+12, 100</textarea>
       <div class="row2">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="0" step="0.1">
+          <input type="number" id="utp_x" value="5" step="0.1">
         </div>
         <div>
           <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="107" step="0.1">
+          <input type="number" id="utp_y" value="109" step="0.1">
         </div>
       </div>
     </div>
@@ -255,18 +297,18 @@
     <div class="card-body">
       <label>HRV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="106.5" step="0.1" placeholder="US">
+        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
         <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="107" step="0.1" placeholder="US">
+        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
         <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="108.5" step="0.1" placeholder="US">
-        <input type="number" id="MFV_ds" value="101" step="0.1" placeholder="DS">
+        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
       </div>
     </div>
   </div>
@@ -313,7 +355,7 @@
     </div>
     <div class="card-body">
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="silt_on" onchange="toggleSub('silt_sub',this)">
+        <label class="switch"><input type="checkbox" id="silt_on" checked onchange="toggleSub('silt_sub',this)">
           <span class="slider"></span></label>
         <label>Include silt</label>
       </div>
@@ -490,7 +532,7 @@
         <label>MFV — Maximum Flood</label>
       </div>
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="run_DFV_nb" checked><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="run_DFV_nb"><span class="slider"></span></label>
         <label>DFV (no rock bolts)</label>
       </div>
     </div>
@@ -499,6 +541,21 @@
   <button class="btn-run" id="run-btn" onclick="runCalc()">▶ Run Calculation</button>
 
 </aside>
+
+<!-- ══════════════════════════════════════════════════════
+     LIVE GEOMETRY PREVIEW
+═══════════════════════════════════════════════════════════ -->
+<div id="live-panel">
+  <h4>📐 Geometry Preview</h4>
+  <canvas id="live-canvas"></canvas>
+  <div class="live-legend">
+    <span><span class="dot" style="background:#8888aa"></span>Dam body</span>
+    <span><span class="dot" style="background:#2255cc"></span>Water levels</span>
+    <span><span class="dot" style="background:#e08020"></span>Silt</span>
+    <span><span class="dot" style="background:#4caf50"></span>Backfill</span>
+  </div>
+  <div id="live-status" style="margin-top:6px;font-size:0.72rem;color:#888;min-height:16px"></div>
+</div>
 
 <!-- ══════════════════════════════════════════════════════
      MAIN PANEL — results
@@ -553,6 +610,400 @@
 </div>
 
 <script>
+// ══════════════════════════════════════════════════════════
+// LIVE GEOMETRY PREVIEW
+// ══════════════════════════════════════════════════════════
+
+const liveCanvas = document.getElementById('live-canvas');
+const liveCtx    = liveCanvas ? liveCanvas.getContext('2d') : null;
+
+function parseCoordsSafe(text) {
+  try { return parseCoords(text); } catch(e) { return null; }
+}
+
+// Interpolate x on a polygon face (list of {x,y} sorted bottom→top) at given y
+function xOnFace(facePts, targetY) {
+  for (let i = 0; i < facePts.length - 1; i++) {
+    const p0 = facePts[i], p1 = facePts[i+1];
+    const lo = Math.min(p0.y, p1.y), hi = Math.max(p0.y, p1.y);
+    if (targetY >= lo - 1e-6 && targetY <= hi + 1e-6) {
+      if (Math.abs(p1.y - p0.y) < 1e-6) return (p0.x + p1.x) / 2;
+      return p0.x + (targetY - p0.y) / (p1.y - p0.y) * (p1.x - p0.x);
+    }
+  }
+  return facePts[facePts.length - 1].x;
+}
+
+function drawLivePreview() {
+  if (!liveCtx) return;
+  const ctx    = liveCtx;
+  const status = document.getElementById('live-status');
+
+  // ── Parse coordinates ──────────────────────────────────
+  const rawCoords = parseCoordsSafe(document.getElementById('coords').value);
+  if (!rawCoords || rawCoords.length < 3) {
+    status.textContent = 'Need at least 3 vertices.';
+    ctx.clearRect(0, 0, liveCanvas.width, liveCanvas.height);
+    return;
+  }
+
+  const utpX = parseFloat(document.getElementById('utp_x').value);
+  const utpY = parseFloat(document.getElementById('utp_y').value);
+
+  // ── Detect heel / toe ───────────────────────────────────
+  const yMin    = Math.min(...rawCoords.map(p => p.y));
+  const basePts = rawCoords.filter(p => p.y <= yMin + 0.1);
+  if (basePts.length < 2) { status.textContent = 'Cannot detect base.'; return; }
+  const toe  = basePts.reduce((a,b) => Math.abs(b.x-utpX) > Math.abs(a.x-utpX) ? b : a);
+  const heel = basePts.reduce((a,b) => Math.abs(b.x-utpX) < Math.abs(a.x-utpX) ? b : a);
+  const mirror = heel.x < toe.x ? -1 : 1;
+
+  // Internal coords (toe→origin, heel at +x, upstream on left in inverted plot)
+  function tr(p) { return { x: mirror * (p.x - toe.x), y: p.y - toe.y }; }
+  const pts   = rawCoords.map(tr);
+  const heelI = tr(heel);
+  const L     = heelI.x;
+  const topRel = Math.max(...pts.map(p => p.y));
+
+  // ── Build upstream and downstream face point lists ──────
+  // US face: vertices with x >= half-way and y increasing
+  const usFace = pts.filter(p => p.x >= L * 0.35)
+                    .sort((a,b) => a.y - b.y);
+  // DS face: vertices with x <= half-way and y increasing
+  const dsFace = pts.filter(p => p.x <= L * 0.65)
+                    .sort((a,b) => a.y - b.y);
+
+  // ── Read all water levels ───────────────────────────────
+  const getF = id => { const v = parseFloat(document.getElementById(id).value); return isNaN(v) ? null : v; };
+  const HRV_us = getF('HRV_us'), HRV_ds = getF('HRV_ds');
+  const DFV_us = getF('DFV_us'), DFV_ds = getF('DFV_ds');
+  const MFV_us = getF('MFV_us'), MFV_ds = getF('MFV_ds');
+
+  // Convert absolute WL to internal y (relative to toe elevation)
+  const toH_us = wl => wl != null ? wl - heel.y : null;
+  const toH_ds = wl => wl != null ? wl - toe.y  : null;
+
+  const usLevels = [
+    { h: toH_us(HRV_us), label: 'HRV_US', color: '#1a55cc' },
+    { h: toH_us(DFV_us), label: 'DFV_US', color: '#2288dd' },
+    { h: toH_us(MFV_us), label: 'MFV_US', color: '#44aaee' },
+  ].filter(l => l.h != null && l.h > 0);
+
+  const dsLevels = [
+    { h: toH_ds(HRV_ds), label: 'HRV_DS', color: '#1a55cc' },
+    { h: toH_ds(DFV_ds), label: 'DFV_DS', color: '#2288dd' },
+    { h: toH_ds(MFV_ds), label: 'MFV_DS', color: '#44aaee' },
+  ].filter(l => l.h != null && l.h > 0);
+
+  // ── Other inputs ─────────────────────────────────────────
+  const siltOn   = document.getElementById('silt_on').checked;
+  const siltH    = getF('silt_h') || 0;
+  const bfPOn    = document.getElementById('bf_p_on').checked;
+  const bfWOn    = document.getElementById('bf_w_on').checked;
+  const bfH      = getF('bf_h') || 0;
+  const rbOn     = document.getElementById('rb_on').checked;
+  const rbCover  = getF('rb_cover') || 0.5;
+  const raOn     = document.getElementById('ra_on').checked;
+  const raCover  = getF('ra_cover') || 2.0;
+  const drainOn  = document.getElementById('drain_on').checked;
+  const drainDist= getF('drain_dist') || 2.0;   // distance from heel
+
+  // ── Canvas sizing (equal-aspect) ─────────────────────────
+  const PAD_LEFT  = 88;    // upstream label space
+  const PAD_RIGHT = 88;    // downstream label space
+  const PAD_TOP   = 28;
+  const PAD_BOT   = 30;
+
+  const canvasW  = Math.max(liveCanvas.parentElement.clientWidth - 24, 200);
+  const drawW    = canvasW - PAD_LEFT - PAD_RIGHT;
+
+  const extraUS  = L * 0.25;
+  const extraDS  = L * 0.25;
+  const visXSpan = L + extraUS + extraDS;
+  const scale    = drawW / visXSpan;              // px per metre — EQUAL in both axes
+
+  // Visible y range: base at 0, top + small headroom
+  const maxWLy   = Math.max(...usLevels.map(l=>l.h), ...dsLevels.map(l=>l.h), topRel, siltH + (heelI.y||0));
+  const visYSpan = maxWLy * 1.18 + 0.5;
+  const drawH    = Math.max(visYSpan * scale, 100);
+  const canvasH  = drawH + PAD_TOP + PAD_BOT;
+
+  liveCanvas.width       = canvasW;
+  liveCanvas.height      = canvasH;
+  liveCanvas.style.height = canvasH + 'px';
+
+  ctx.clearRect(0, 0, canvasW, canvasH);
+
+  // ── Coordinate helpers ────────────────────────────────────
+  // x-axis INVERTED: toe (x=0) on RIGHT, heel (x=L) on LEFT
+  // visXMax is the right boundary (toe side), visXMin is the left (heel/upstream side)
+  const visXMax = extraDS;     // internal x of right canvas edge
+  const visXMin = -(L + extraUS); // internal x of left canvas edge (negative in inverted)
+
+  function cx(ix) {
+    // internal x=0 (toe) → PAD_LEFT + extraDS*scale (right area)
+    // internal x=L (heel) → PAD_LEFT + (extraDS+L)*scale (left area)
+    // with inversion: canvas_x = PAD_LEFT + (extraDS + L - ix) * scale ... wait
+    // Inverted: higher internal x → further LEFT on canvas
+    // canvas_x = PAD_LEFT + (extraDS + (L - ix)) * scale
+    // At ix=0 (toe): PAD_LEFT + (extraDS + L) * scale = right portion ✓
+    // At ix=L (heel): PAD_LEFT + extraDS * scale = left portion ✓
+    return PAD_LEFT + (extraDS + L - ix) * scale;
+  }
+  function cy(iy) {
+    return PAD_TOP + (visYSpan - iy) * scale;
+  }
+
+  // ── Background ────────────────────────────────────────────
+  ctx.fillStyle = '#f0f2f5';
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // ── Ground line (y=0) ─────────────────────────────────────
+  ctx.save();
+  ctx.strokeStyle = '#aaa'; ctx.lineWidth = 1; ctx.setLineDash([3,3]);
+  ctx.beginPath();
+  ctx.moveTo(PAD_LEFT, cy(0)); ctx.lineTo(canvasW - PAD_RIGHT, cy(0));
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.restore();
+
+  // ── Dam body ──────────────────────────────────────────────
+  ctx.save();
+  ctx.fillStyle   = '#b8bccf';
+  ctx.strokeStyle = '#3a3d5c';
+  ctx.lineWidth   = 1.8;
+  ctx.beginPath();
+  ctx.moveTo(cx(pts[0].x), cy(pts[0].y));
+  for (const p of pts) ctx.lineTo(cx(p.x), cy(p.y));
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // ── Helper: draw one horizontal level line ────────────────
+  // xFaceInternal: where the line meets the dam face (in internal coords)
+  // xOuter: how far to extend the line outward (in internal coords, can exceed dam)
+  // labelSide: 'us' → label in left padding; 'ds' → label in right padding
+  function drawLevelLine(yInt, xFace, xOuter, labelSide, color, label, dashed=false) {
+    const lineY  = cy(yInt);
+    const xFaceC = cx(xFace);
+    const xOutC  = cx(xOuter);
+
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 1.6;
+    if (dashed) ctx.setLineDash([5, 3]);
+    ctx.beginPath();
+    ctx.moveTo(xFaceC, lineY);
+    ctx.lineTo(xOutC,  lineY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Small tick at the face end
+    ctx.beginPath();
+    ctx.moveTo(xFaceC, lineY - 3);
+    ctx.lineTo(xFaceC, lineY + 3);
+    ctx.stroke();
+
+    // Label in padding zone
+    ctx.font      = 'bold 8.5px sans-serif';
+    ctx.fillStyle = color;
+    ctx.textBaseline = 'middle';
+    if (labelSide === 'us') {
+      ctx.textAlign = 'right';
+      ctx.fillText(label, PAD_LEFT - 5, lineY);
+    } else {
+      ctx.textAlign = 'left';
+      ctx.fillText(label, canvasW - PAD_RIGHT + 5, lineY);
+    }
+    ctx.restore();
+  }
+
+  // ── Upstream water level lines ────────────────────────────
+  // Stagger labels vertically if they are close together
+  const minLabelSep = 10; // px
+  let lastUSLabelY = -999;
+  [...usLevels].reverse().forEach((lvl, ri) => {
+    const yInt  = Math.min(lvl.h + heelI.y, topRel + 0.5); // cap display at crest+0.5
+    const yDisp = lvl.h + heelI.y;                          // actual level (may be above crest)
+    // x where line meets upstream face (or crest if overtopping)
+    const xFace = yDisp >= topRel
+      ? xOnFace(usFace, topRel)   // at crest level
+      : xOnFace(usFace, yDisp);
+    const xOuter = L + extraUS * 0.85;  // extend into upstream padding
+    drawLevelLine(Math.min(yDisp, topRel), xFace, xOuter, 'us',
+                  lvl.color, `${lvl.label} = ${(lvl.h + heel.y).toFixed(1)}m`);
+  });
+
+  // ── Downstream water level lines ──────────────────────────
+  dsLevels.forEach(lvl => {
+    const yDisp = lvl.h;
+    const xFace = yDisp >= topRel
+      ? xOnFace(dsFace, topRel)
+      : xOnFace(dsFace, yDisp);
+    const xOuter = -extraDS * 0.85;  // extend into downstream padding (negative internal)
+    drawLevelLine(Math.min(yDisp, topRel), xFace, xOuter, 'ds',
+                  lvl.color, `${lvl.label} = ${(lvl.h + toe.y).toFixed(1)}m`);
+  });
+
+  // ── Silt level line (upstream side) ──────────────────────
+  if (siltOn && siltH > 0) {
+    const ySilt  = heelI.y + siltH;
+    if (ySilt <= topRel + 0.01) {
+      const xFace  = xOnFace(usFace, ySilt);
+      const xOuter = L + extraUS * 0.85;
+      drawLevelLine(ySilt, xFace, xOuter, 'us',
+                    '#b05a10', `Silt h=${siltH.toFixed(1)}m`, true);
+    }
+  }
+
+  // ── Backfill level line (downstream side) ─────────────────
+  if ((bfPOn || bfWOn) && bfH > 0) {
+    const yBF   = toeI ? toeI.y + bfH : bfH;
+    const yCap  = Math.min(yBF, topRel);
+    if (yCap > 0) {
+      const xFace  = xOnFace(dsFace, yCap);
+      const xOuter = -extraDS * 0.85;
+      drawLevelLine(yCap, xFace, xOuter, 'ds',
+                    '#277a27', `Backfill h=${bfH.toFixed(1)}m`, true);
+    }
+  }
+
+  // ── Rock bolt vertical line ───────────────────────────────
+  // Position: heel_x - cover_from_heel (internal coords)
+  function drawRockElement(coverFromHeel, color, label) {
+    const xPos   = L - coverFromHeel;   // internal x
+    const yBase  = heelI.y;             // base level (inclined base support)
+    const yTop   = yBase + 1.5;         // 1.5 m into dam
+    const yBot   = yBase - 2.0;         // 2.0 m below dam
+
+    const cxPos  = cx(xPos);
+    const cyTop  = cy(yTop);
+    const cyBase = cy(yBase);
+    const cyBot  = cy(yBot);
+
+    ctx.save();
+    // Line through dam and below
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 2.2;
+    ctx.beginPath();
+    ctx.moveTo(cxPos, cyTop);
+    ctx.lineTo(cxPos, cyBot);
+    ctx.stroke();
+
+    // Hatching at bottom (anchor symbol)
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 4; i++) {
+      const yh = cyBot + i * 4;
+      ctx.beginPath();
+      ctx.moveTo(cxPos - 6, yh);
+      ctx.lineTo(cxPos + 6, yh + 5);
+      ctx.stroke();
+    }
+
+    // Plate at top of bolt (small horizontal bar inside dam)
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cxPos - 5, cyTop);
+    ctx.lineTo(cxPos + 5, cyTop);
+    ctx.stroke();
+
+    // Label
+    ctx.font      = 'bold 8px sans-serif';
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(label, cxPos, cyTop - 13);
+    ctx.restore();
+  }
+
+  if (rbOn) drawRockElement(rbCover, '#8b0000', 'Rock Bolt');
+  if (raOn) drawRockElement(raCover, '#4a0080', 'Rock Anchor');
+
+  // ── Drainage symbol ───────────────────────────────────────
+  if (drainOn) {
+    // Drainage position: L - drainDist from toe = drainDist from heel in internal x
+    const xDrain = L - drainDist;
+    const cxD    = cx(xDrain);
+    const yBase  = heelI.y;
+    // Small rectangle straddling the base line (frame symbol)
+    const hw = 5;   // half-width in px
+    const ht = Math.max(8, scale * 1.2);   // height in px
+    ctx.save();
+    ctx.strokeStyle = '#007b7b';
+    ctx.lineWidth   = 1.8;
+    ctx.setLineDash([3, 2]);
+    ctx.strokeRect(cxD - hw, cy(yBase) - ht / 2, hw * 2, ht);
+    ctx.setLineDash([]);
+    // Vertical dashed line from base down
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(cxD, cy(yBase) + ht / 2);
+    ctx.lineTo(cxD, cy(yBase) + scale * 1.5);
+    ctx.stroke();
+    // Label
+    ctx.font      = 'bold 8px sans-serif';
+    ctx.fillStyle = '#007b7b';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText('Drain', cxD, cy(yBase) + scale * 1.5 + 2);
+    ctx.restore();
+  }
+
+  // ── Toe / Heel labels and base dimension ─────────────────
+  ctx.save();
+  ctx.fillStyle    = '#555';
+  ctx.font         = '8px sans-serif';
+  ctx.textAlign    = 'center';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Toe',  cx(0), cy(0) + 3);
+  ctx.fillText('Heel', cx(L), cy(heelI.y) + 3);
+
+  // Base dimension arrow
+  const dimY = cy(0) + 18;
+  ctx.strokeStyle = '#888'; ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx(0), dimY); ctx.lineTo(cx(L), dimY);
+  ctx.stroke();
+  // Arrow heads
+  [[cx(0), 1], [cx(L), -1]].forEach(([x, d]) => {
+    ctx.beginPath();
+    ctx.moveTo(x, dimY);
+    ctx.lineTo(x + d * 5, dimY - 3);
+    ctx.lineTo(x + d * 5, dimY + 3);
+    ctx.fill();
+  });
+  ctx.font = '8px sans-serif';
+  ctx.fillStyle = '#555';
+  ctx.fillText(`L = ${L.toFixed(2)} m`, cx(L / 2), dimY + 4);
+  ctx.restore();
+
+  status.textContent =
+    `L = ${L.toFixed(2)} m  |  Height = ${topRel.toFixed(2)} m  |  Vertices: ${pts.length}`;
+}
+
+function attachLiveListeners() {
+  const watchIds = [
+    'coords','utp_x','utp_y',
+    'HRV_us','HRV_ds','DFV_us','DFV_ds','MFV_us','MFV_ds',
+    'silt_on','silt_h',
+    'bf_p_on','bf_w_on','bf_h',
+    'rb_on','rb_cover',
+    'ra_on','ra_cover',
+    'drain_on','drain_dist',
+  ];
+  watchIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const evt = (el.tagName==='TEXTAREA' || el.type==='number' || el.type==='text')
+                ? 'input' : 'change';
+    el.addEventListener(evt, () => drawLivePreview());
+  });
+}
+
+// Draw on load and when window resizes
+window.addEventListener('load', () => { attachLiveListeners(); drawLivePreview(); });
+window.addEventListener('resize', drawLivePreview);
+
 // ── Applied force rows ──────────────────────────────────
 function addForceRow(tableId) {
   const tbody = document.getElementById(tableId);
@@ -588,6 +1039,18 @@ function collectForceTable(tableId) {
     if (!isNaN(v1) && !isNaN(v2)) result.push([v1, v2]);
   });
   return result;
+}
+
+// ── Build messages HTML ─────────────────────────────────
+function buildMessages(messages) {
+  if (!messages || messages.length === 0) return '';
+  const icons = { info: 'ℹ️', warning: '⚠️', alert: '🚨' };
+  const rows = messages.map(m => `
+    <div class="msg ${m.type}">
+      <span class="msg-icon">${icons[m.type] || 'ℹ️'}</span>
+      <span>${m.text}</span>
+    </div>`).join('');
+  return `<div class="msg-panel">${rows}</div>`;
 }
 
 // ── Store last result for export ─────────────────────────
@@ -873,9 +1336,12 @@ function renderResults(data) {
     // ── Assemble pane ────────────────────────────────────
     const pane = document.createElement('div');
     pane.className = 'tab-pane' + (idx===0 ? ' active' : '');
+    const messagesHtml = buildMessages(res.messages || []);
+
     pane.innerHTML = `
       ${idx===0 ? warnHtml : ''}
       <h3 style="margin-bottom:12px;color:#1a3a5c">Load Case: ${res.case_name}</h3>
+      ${messagesHtml}
       ${summaryHtml}
       <div class="card" style="margin-bottom:18px">
         <div class="card-head">📊 Force Table</div>
