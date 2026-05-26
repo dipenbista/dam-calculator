@@ -1331,6 +1331,20 @@ function renderResults(data) {
 
   document.getElementById('results-area').style.display = 'block';
 }
+
+function switchTab(idx) {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  const tabPanes   = document.querySelectorAll('.tab-pane');
+
+  tabButtons.forEach((btn, i) => {
+    btn.classList.toggle('active', i === idx);
+  });
+
+  tabPanes.forEach((pane, i) => {
+    pane.classList.toggle('active', i === idx);
+  });
+}
+ 
 </script>
 </body>
 </html>
