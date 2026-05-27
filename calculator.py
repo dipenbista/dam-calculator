@@ -299,7 +299,7 @@ def build_uplift_pressure_polygon(L, h_us_u, h_ds_u, drainage, Lt):
 
 def compute_dam_weight(geom, mat):
     area, cx, cy = polygon_area_centroid(geom.coordinates)
-    return make_force('Dam Weight', V=mat.unit_weight_dam*area, x=cx, stabilising=True)
+    return make_force('Dam Weight', V=mat.unit_weight_dam*area, x=cx, y=cy, stabilising=True)
 
 
 def compute_water_weight_upstream(geom, mat, wl_us_abs):
