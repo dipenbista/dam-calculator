@@ -246,6 +246,42 @@
   .btn-download:disabled { background: #aaa; cursor: not-allowed; }
   .btn-download svg { flex-shrink: 0; }
 
+  /* ── Multi-height section ─────────────────────────────── */
+  #multi-height-section {
+    margin-top: 24px; border: 2px solid #2e6da4;
+    border-radius: 8px; overflow: hidden;
+  }
+  .mh-header {
+    background: linear-gradient(135deg, #1a3a5c, #2e6da4);
+    color: white; padding: 12px 16px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .mh-header h4 { font-size: 0.92rem; font-weight: 700; margin: 0; }
+  .mh-header p  { font-size: 0.75rem; opacity: 0.85; margin: 2px 0 0; }
+  .mh-body { padding: 14px 16px; background: #f8f9fb; }
+  .mh-note {
+    font-size: 0.77rem; color: #555; margin-bottom: 10px;
+    line-height: 1.55; background: #eaf3fb; padding: 8px 10px;
+    border-radius: 4px; border-left: 3px solid #2e6da4;
+  }
+  .btn-run-mh {
+    padding: 9px 20px; background: linear-gradient(135deg,#1a5c3a,#27ae60);
+    color:white; border:none; border-radius:5px; font-size:0.88rem;
+    font-weight:600; cursor:pointer; transition:opacity .15s; margin-top:10px;
+  }
+  .btn-run-mh:hover { opacity:.88; }
+  .btn-run-mh:disabled { background:#aaa; cursor:not-allowed; }
+  #mh-results { margin-top: 16px; }
+  .mh-result-card {
+    background:#fff; border-radius:6px; border:1px solid #dde3ec;
+    margin-bottom:12px; overflow:hidden;
+  }
+  .mh-result-head {
+    background:#2e6da4; color:white; padding:7px 12px;
+    font-size:0.82rem; font-weight:600;
+  }
+  .mh-result-body { padding:10px 12px; }
+
   /* ── Placeholder ───────────────────────────────────────── */
   #placeholder {
     text-align: center; padding: 80px 20px; color: #aaa;
@@ -278,20 +314,35 @@
     </div>
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
-      <textarea id="coords" rows="12">
-0, 87.8
+      <textarea id="coords" rows="14">0, 87.8
 0, 101.8
-2.0, 101.8
+2, 101.8
 13.2, 87.8
-</textarea>
-      <div class="row2">
-        <div>
-          <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="0.0" step="0.1">
-        </div>
-        <div>
-          <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="101.8" step="0.1">
+	
+	
+	</textarea>
+      <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
+        <b>Upstream top point</b> — the highest vertex on the upstream face
+        (used to distinguish upstream from downstream). Auto-detected from
+        the highest-y vertex; override below only if auto-detection is wrong.
+      </p>
+      <div class="toggle-row" style="margin-top:6px">
+        <label class="switch">
+          <input type="checkbox" id="utp_override" onchange="toggleSub('utp_sub',this)">
+          <span class="slider"></span>
+        </label>
+        <label>Override auto-detect</label>
+      </div>
+      <div class="sub-fields collapsed" id="utp_sub">
+        <div class="row2">
+          <div>
+            <label>Upstream top point X</label>
+            <input type="number" id="utp_x" value="0" step="0.1">
+          </div>
+          <div>
+            <label>Upstream top point Y</label>
+            <input type="number" id="utp_y" value="101.8" step="0.1">
+          </div>
         </div>
       </div>
     </div>
@@ -368,8 +419,8 @@
         <label>Include silt</label>
       </div>
       <div class="sub-fields" id="silt_sub">
-        <label>Height on upstream side (m)</label>
-        <input type="number" id="silt_h"  value="3.0" step="0.1">
+        <label>Silt surface elevation (m absolute)</label>
+        <input type="number" id="silt_h"  value="90.8" step="0.1">
         <label>Submerged unit weight (kN/m³)</label>
         <input type="number" id="silt_uw" value="9.0" step="0.1">
         <label>Friction angle φ (°)</label>
@@ -395,8 +446,8 @@
         <label>Include backfill weight</label>
       </div>
       <div class="sub-fields collapsed" id="bf_sub">
-        <label>Height (m)</label>
-        <input type="number" id="bf_h"   value="0.0" step="0.1">
+        <label>Backfill surface elevation (m absolute)</label>
+        <input type="number" id="bf_h"   value="100.0" step="0.1">
         <label>Ka (pressure coeff)</label>
         <input type="number" id="bf_Ka"  value="0.333" step="0.001">
         <label>Unit weight dry (kN/m³)</label>
@@ -641,6 +692,70 @@
 
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════
+       MULTI-HEIGHT ANALYSIS SECTION
+  ════════════════════════════════════════════════════════════ -->
+  <div id="multi-height-section" style="display:none">
+    <div class="mh-header">
+      <div>
+        <h4>⛰ Stability at Different Dam Heights</h4>
+        <p>Same dam geometry — analyse stability at lower cross-sections in the valley</p>
+      </div>
+      <button class="btn-download" id="dl-btn-mh" onclick="downloadExcelMH()"
+              disabled style="margin:0;padding:8px 14px;font-size:0.8rem">
+        ⬇ Download All Heights Excel
+      </button>
+    </div>
+    <div class="mh-body">
+      <div class="mh-note">
+        Add one row per cross-section. For each row specify the <b>upstream toe X, Y</b>
+        (new heel position) and <b>downstream toe X, Y</b> (new toe position) in the
+        <b>same absolute coordinate system</b> as the original dam polygon.
+        The dam geometry above these points is kept identical — only the base is cut lower.
+        The downstream water level defaults to the new toe elevation.
+      </div>
+
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:0.82rem;font-weight:600;color:#1a3a5c">Cross-sections to analyse</span>
+        <button onclick="addHeightRow()"
+          style="font-size:0.75rem;padding:3px 10px;border:1px solid #2e6da4;
+                 border-radius:4px;background:#eaf3fb;color:#2e6da4;cursor:pointer">
+          + Add row
+        </button>
+      </div>
+
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+          <thead>
+            <tr>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:90px">Label</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:80px">US toe X</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:80px">US toe Y</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:80px">DS toe X</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:80px">DS toe Y</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:90px">HRV DS WL</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:90px">DFV DS WL</th>
+              <th style="background:#2e6da4;color:white;padding:6px 8px;text-align:left;min-width:90px">MFV DS WL</th>
+              <th style="background:#2e6da4;color:white;padding:6px 4px;width:28px"></th>
+            </tr>
+          </thead>
+          <tbody id="mh-table"></tbody>
+        </table>
+      </div>
+
+      <button class="btn-run-mh" id="run-mh-btn" onclick="runMultiHeight()">
+        ▶ Run Multi-Height Analysis
+      </button>
+
+      <div id="mh-spinner" style="display:none;text-align:center;padding:20px;color:#555">
+        <div class="spin" style="margin:0 auto 8px"></div>
+        <p style="font-size:0.85rem">Running analyses…</p>
+      </div>
+
+      <div id="mh-results"></div>
+    </div>
+  </div>
+
 </main>
 </div>
 
@@ -694,8 +809,186 @@ function buildMessages(messages) {
   return `<div class="msg-panel">${rows}</div>`;
 }
 
+// ══════════════════════════════════════════════════════════
+// MULTI-HEIGHT ANALYSIS
+// ══════════════════════════════════════════════════════════
+
+let lastMHData = null;   // store multi-height results for Excel export
+
+function addHeightRow() {
+  const tbody = document.getElementById('mh-table');
+  const tr    = document.createElement('tr');
+  const inp   = (ph, val='') => `
+    <input type="number" step="any" placeholder="${ph}" value="${val}"
+           style="width:100%;padding:4px 5px;border:1px solid #c8d0dc;
+                  border-radius:3px;font-size:0.76rem">`;
+  tr.innerHTML = `
+    <td style="padding:3px 4px">
+      <input type="text" placeholder="e.g. El.95" value=""
+             style="width:100%;padding:4px 5px;border:1px solid #c8d0dc;
+                    border-radius:3px;font-size:0.76rem">
+    </td>
+    <td style="padding:3px 4px">${inp('X')}</td>
+    <td style="padding:3px 4px">${inp('Y')}</td>
+    <td style="padding:3px 4px">${inp('X')}</td>
+    <td style="padding:3px 4px">${inp('Y')}</td>
+    <td style="padding:3px 4px">${inp('WL')}</td>
+    <td style="padding:3px 4px">${inp('WL')}</td>
+    <td style="padding:3px 4px">${inp('WL')}</td>
+    <td style="padding:3px 4px;text-align:center">
+      <button onclick="this.closest('tr').remove()"
+        style="background:#fdecea;border:1px solid #f5c6cb;border-radius:3px;
+               color:#c0392b;font-size:0.8rem;padding:2px 6px;cursor:pointer">✕</button>
+    </td>`;
+  tbody.appendChild(tr);
+}
+
+function collectMHRows() {
+  const rows = [];
+  document.querySelectorAll('#mh-table tr').forEach(tr => {
+    const inputs = tr.querySelectorAll('input');
+    if (inputs.length < 8) return;
+    const vals = Array.from(inputs).map(i => i.value.trim());
+    const label = vals[0] || 'Section';
+    const nums  = vals.slice(1).map(Number);
+    if (nums.some(isNaN)) return;
+    rows.push({
+      label,
+      us_toe_x: nums[0], us_toe_y: nums[1],
+      ds_toe_x: nums[2], ds_toe_y: nums[3],
+      hrv_ds_wl: nums[4], dfv_ds_wl: nums[5], mfv_ds_wl: nums[6],
+    });
+  });
+  return rows;
+}
+
+async function runMultiHeight() {
+  if (!lastRequestPayload) {
+    alert('Run the main calculation first.'); return;
+  }
+  const rows = collectMHRows();
+  if (rows.length === 0) {
+    alert('Add at least one cross-section row.'); return;
+  }
+
+  const btn = document.getElementById('run-mh-btn');
+  btn.disabled = true;
+  document.getElementById('mh-spinner').style.display = 'block';
+  document.getElementById('mh-results').innerHTML = '';
+  document.getElementById('dl-btn-mh').disabled = true;
+
+  try {
+    const payload = {
+      base_request: lastRequestPayload,
+      sections: rows,
+    };
+    const resp = await fetch('/calculate_heights', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || JSON.stringify(data));
+
+    lastMHData = data;
+    renderMHResults(data);
+    document.getElementById('dl-btn-mh').disabled = false;
+
+  } catch (err) {
+    document.getElementById('mh-results').innerHTML =
+      `<div style="color:#c0392b;padding:10px;background:#fdecea;border-radius:5px">
+        ⚠ ${err.message}</div>`;
+  } finally {
+    document.getElementById('mh-spinner').style.display = 'none';
+    btn.disabled = false;
+  }
+}
+
+function renderMHResults(data) {
+  const container = document.getElementById('mh-results');
+  container.innerHTML = '';
+
+  data.sections.forEach(sec => {
+    const card = document.createElement('div');
+    card.className = 'mh-result-card';
+    // Build a mini-summary table for each load case
+    const rows = sec.results.map(res => {
+      const isStrict   = (res.case_name === 'HRV' || res.case_name === 'DFV');
+      const fsThresh   = isStrict ? 1.5 : 1.1;
+      const fsOk       = res.FS_sliding >= fsThresh;
+      const midOk      = res.in_middle_third;
+      const color      = (fsOk && midOk) ? '#1a6b3a' : '#8b1a1a';
+      const bg         = (fsOk && midOk) ? '#d6f0e0' : '#fdecea';
+      const fsDisp     = res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3);
+      const foDisp     = res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3);
+      return `<tr style="background:${bg}">
+        <td style="padding:5px 8px;font-weight:600;color:${color}">${res.case_name}</td>
+        <td style="padding:5px 8px;text-align:right">${fsDisp}</td>
+        <td style="padding:5px 8px;text-align:right">${foDisp}</td>
+        <td style="padding:5px 8px;text-align:center;font-weight:600;color:${color}">
+          ${midOk ? '✓ OK' : '✗ Outside'}</td>
+        <td style="padding:5px 8px;text-align:right">${res.sigma_toe.toFixed(1)}</td>
+        <td style="padding:5px 8px;text-align:right">${res.sigma_heel.toFixed(1)}</td>
+      </tr>`;
+    }).join('');
+
+    card.innerHTML = `
+      <div class="mh-result-head">
+        ⛰ ${sec.label}
+        &nbsp;|&nbsp; Heel: ${sec.heel_elevation.toFixed(1)} m
+        &nbsp;|&nbsp; Toe: ${sec.toe_elevation.toFixed(1)} m
+        &nbsp;|&nbsp; L = ${sec.base_width.toFixed(2)} m
+        &nbsp;|&nbsp; Height = ${sec.dam_height.toFixed(2)} m
+      </div>
+      <div class="mh-result-body">
+        <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+          <thead>
+            <tr style="background:#eaf3fb">
+              <th style="padding:5px 8px;text-align:left">Load Case</th>
+              <th style="padding:5px 8px;text-align:right">FS Sliding</th>
+              <th style="padding:5px 8px;text-align:right">FS Overturn</th>
+              <th style="padding:5px 8px;text-align:center">Resultant</th>
+              <th style="padding:5px 8px;text-align:right">σ toe (kN/m²)</th>
+              <th style="padding:5px 8px;text-align:right">σ heel (kN/m²)</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
+    container.appendChild(card);
+  });
+}
+
+async function downloadExcelMH() {
+  if (!lastMHData) return;
+  const btn = document.getElementById('dl-btn-mh');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating…';
+  try {
+    const resp = await fetch('/export_heights', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(lastMHData),
+    });
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail); }
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = 'dam_multi_height_results.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert('Export error: ' + err.message);
+  } finally {
+    btn.disabled    = false;
+    btn.textContent = '⬇ Download All Heights Excel';
+  }
+}
+
 // ── Store last result for export ─────────────────────────
-let lastResponseData = null;
+let lastResponseData   = null;
+let lastRequestPayload = null;
 
 // ── Download Excel ───────────────────────────────────────
 async function downloadExcel() {
@@ -740,6 +1033,36 @@ async function downloadExcel() {
     </svg> Download Results as Excel`;
   }
 }
+// ── Tab switching ───────────────────────────────────────
+function switchTab(idx) {
+  document.querySelectorAll('.tab-btn' ).forEach((b,i) => b.classList.toggle('active', i===idx));
+  document.querySelectorAll('.tab-pane').forEach((p,i) => p.classList.toggle('active', i===idx));
+}
+
+// ── Auto-detect upstream top point ──────────────────────
+function computeUTP() {
+  // If user override is on, use manual values
+  if (document.getElementById('utp_override').checked) {
+    return { x: n('utp_x'), y: n('utp_y') };
+  }
+  // Otherwise: find the highest-y vertex on the upstream side.
+  // "Upstream side" = vertices with x closer to the min-x side of the polygon.
+  // Strategy: take the highest vertex overall — for a standard gravity dam
+  // the upstream crest is always the highest upstream point.
+  const rawCoords = parseCoordsQuiet(document.getElementById('coords').value);
+  if (!rawCoords || rawCoords.length < 3) return { x: n('utp_x'), y: n('utp_y') };
+
+  // Find the vertex with maximum y (highest elevation)
+  // If there are ties (flat crest), take the one with smallest x (upstream side)
+  let best = rawCoords[0];
+  for (const p of rawCoords) {
+    if (p.y > best.y || (Math.abs(p.y - best.y) < 1e-6 && p.x < best.x)) {
+      best = p;
+    }
+  }
+  return { x: best.x, y: best.y };
+}
+
 function toggleCard(head) {
   const body   = head.nextElementSibling;
   const toggle = head.querySelector('.toggle');
@@ -796,10 +1119,10 @@ function updateLivePreview() {
   const MFV_us = parseFloat(document.getElementById('MFV_us').value);
   const MFV_ds = parseFloat(document.getElementById('MFV_ds').value);
   const allWL  = [HRV_us,HRV_ds,DFV_us,DFV_ds,MFV_us,MFV_ds].filter(v=>!isNaN(v));
-  const siltOn = document.getElementById('silt_on').checked;
-  const siltH  = parseFloat(document.getElementById('silt_h').value) || 0;
-  const bfPOn  = document.getElementById('bf_p_on').checked;
-  const bfH    = parseFloat(document.getElementById('bf_h').value) || 0;
+  const siltOn    = document.getElementById('silt_on').checked;
+  const siltElev  = parseFloat(document.getElementById('silt_h').value) || 0;  // absolute elevation
+  const bfPOn     = document.getElementById('bf_p_on').checked;
+  const bfElev    = parseFloat(document.getElementById('bf_h').value) || 0;    // absolute elevation
   const utpX   = parseFloat(document.getElementById('utp_x').value);
   const utpY   = parseFloat(document.getElementById('utp_y').value);
   const rbOn   = document.getElementById('rb_on').checked;
@@ -860,7 +1183,14 @@ function updateLivePreview() {
   const worldW = wMaxX-wMinX, worldH = wMaxY-wMinY;
 
   // ── Equal scale mapping ──────────────────────────────────────────────────
-  const SVG_W=310, SVG_H=420, ML=10, MR=54, MT=14, MB=28;
+  // Detect if upstream face is near-vertical (very small horizontal span)
+  const usFaceXrange = usFacePts.length >= 2
+    ? Math.abs(Math.max(...usFacePts.map(p=>p.x)) - Math.min(...usFacePts.map(p=>p.x)))
+    : 0;
+  const isVerticalUS = usFaceXrange < rawSpanX * 0.05;   // face span < 5% of dam width
+
+  // Give more left margin when US face is vertical so labels have room
+  const SVG_W=310, SVG_H=420, ML= isVerticalUS ? 58 : 10, MR=54, MT=14, MB=28;
   const availW=SVG_W-ML-MR, availH=SVG_H-MT-MB;
   const scale = Math.min(availW/worldW, availH/worldH);
   const usedW = worldW*scale, usedH = worldH*scale;
@@ -901,20 +1231,22 @@ function updateLivePreview() {
   }
 
   // ── Silt: horizontal dashed line on upstream face ─────────────────────────
-  if (siltOn && siltH > 0 && !isNaN(utpX)) {
-    const siltAbsY = baseY + siltH;
+  if (siltOn && siltElev > 0 && !isNaN(utpX)) {
+    const siltAbsY = siltElev;   // already absolute elevation
     const faceX    = xOnFaceAtY(usFacePts, siltAbsY) ?? heelX;
     const {sx:slx0, sy:sly} = toSvg(wMinX, siltAbsY);
     const {sx:slx1}         = toSvg(faceX, siltAbsY);
     html += `<line x1="${clampLeft(slx0)}" y1="${sly}" x2="${slx1}" y2="${sly}"
       stroke="#8a6830" stroke-width="2" stroke-dasharray="5,3"/>`;
-    html += `<text x="${clampLeft(slx0)-2}" y="${sly-3}" fill="#6b4f1a"
+    // Silt label: always in left padding zone, anchor end
+    const siltLabelX = Math.max(2, clampLeft(slx0) - 3);
+    html += `<text x="${siltLabelX}" y="${sly+3}" fill="#6b4f1a"
       font-size="8" text-anchor="end" font-weight="600">Silt</text>`;
   }
 
   // ── Backfill: horizontal dashed line on downstream face ───────────────────
-  if (bfPOn && bfH > 0) {
-    const bfAbsY = baseY + bfH;
+  if (bfPOn && bfElev > 0) {
+    const bfAbsY = bfElev;   // already absolute elevation
     const faceX  = xOnFaceAtY(dsFacePts, bfAbsY) ?? toeX;
     const {sx:blx0, sy:bly} = toSvg(faceX, bfAbsY);
     const {sx:blx1}         = toSvg(wMaxX, bfAbsY);
@@ -950,10 +1282,14 @@ function updateLivePreview() {
           faceX = xOnFaceAtY(usFacePts, wlY) ?? (!isNaN(utpX) ? utpX : heelX);
         }
         const {sx:x1} = toSvg(faceX, wlY);
-        html += `<line x1="${clampLeft(x0)}" y1="${sy}" x2="${x1}" y2="${sy}"
+        // Line: from left margin boundary to the US face
+        const lineX0 = clampLeft(x0);
+        html += `<line x1="${lineX0}" y1="${sy}" x2="${x1}" y2="${sy}"
           stroke="${color}" stroke-width="${lw}" stroke-dasharray="${dash}" opacity="0.9"/>`;
-        html += `<text x="${clampLeft(x0)+2}" y="${sy-3}" fill="${color}"
-          font-size="8" font-weight="700">${label} US</text>`;
+        // Label: always in the left padding zone (to the left of lineX0)
+        const labelX = Math.max(2, lineX0 - 3);
+        html += `<text x="${labelX}" y="${sy+3}" fill="${color}"
+          font-size="8" font-weight="700" text-anchor="end">${label}_US</text>`;
       }
     }
     // Downstream water level — from DS face rightward
@@ -1021,8 +1357,8 @@ function updateLivePreview() {
   // ── Y-axis elevation ticks ────────────────────────────────────────────────
   const labelElevs = [...new Set(
     [baseY, topY, ...allWL,
-     siltOn&&siltH>0 ? baseY+siltH : null,
-     bfPOn&&bfH>0   ? baseY+bfH   : null]
+     siltOn && siltElev > 0 ? siltElev : null,
+	bfPOn && bfElev > 0 ? bfElev : null]
     .filter(v=>v!==null&&!isNaN(v))
   )].sort((a,b)=>a-b);
 
@@ -1122,7 +1458,12 @@ async function runCalc() {
 
     const payload = {
       coordinates:        coords,
-      upstream_top_point: { x: n('utp_x'), y: n('utp_y') },
+      upstream_top_point: computeUTP(),
+
+      // silt_elevation_us and backfill_elevation are sent raw;
+      // main.py converts them to heights using heel/toe elevations
+      silt_elevation_us:   n('silt_h'),
+      backfill_elevation:  n('bf_h'),
 
       HRV_us: n('HRV_us'), DFV_us: n('DFV_us'), MFV_us: n('MFV_us'),
       HRV_ds: n('HRV_ds'), DFV_ds: n('DFV_ds'), MFV_ds: n('MFV_ds'),
@@ -1136,13 +1477,13 @@ async function runCalc() {
       drainage_reduction_factor:   n('drain_rf'),
 
       silt_include:               cb('silt_on'),
-      silt_height_us:             n('silt_h'),
+      silt_elevation_us:          n('silt_h'),   // absolute elevation
       silt_unit_weight_submerged: n('silt_uw'),
       silt_phi_deg:               n('silt_phi'),
 
       backfill_include_pressure:      cb('bf_p_on'),
       backfill_include_weight:        cb('bf_w_on'),
-      backfill_height:                n('bf_h'),
+      backfill_elevation:             n('bf_h'),   // absolute elevation
       backfill_coeff_pressure:        n('bf_Ka'),
       backfill_unit_weight_dry:       n('bf_uw_dry'),
       backfill_unit_weight_submerged: n('bf_uw_sub'),
@@ -1180,8 +1521,11 @@ async function runCalc() {
     }
 
     renderResults(data);
-    lastResponseData = data;
+    lastResponseData    = data;
+    lastRequestPayload  = payload;   // store for multi-height reuse
     document.getElementById('dl-btn').disabled = false;
+    // Show multi-height section after first successful calculation
+    document.getElementById('multi-height-section').style.display = 'block';
 
   } catch (err) {
     document.getElementById('error-box').style.display = 'block';
@@ -1326,20 +1670,6 @@ function renderResults(data) {
 
   document.getElementById('results-area').style.display = 'block';
 }
-
-function switchTab(idx) {
-  const tabButtons = document.querySelectorAll('.tab-btn');
-  const tabPanes   = document.querySelectorAll('.tab-pane');
-
-  tabButtons.forEach((btn, i) => {
-    btn.classList.toggle('active', i === idx);
-  });
-
-  tabPanes.forEach((pane, i) => {
-    pane.classList.toggle('active', i === idx);
-  });
-}
- 
 </script>
 </body>
 </html>
