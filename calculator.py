@@ -1028,7 +1028,7 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     check_name = res.get('resultant_check_type','Middle third')
     mt_str = f"✓ Within {check_name}" if res['in_middle_third'] else f"✗ Outside {check_name}"
     ax.set_title(f"Load Case: {res['case_name']}\n"
-                 f"FS_slide={res['FS_sliding']:.3f}  |  FS_overturn={res['FS_overturning']:.3f}  |  {mt_str}",
+                 ,
                  fontsize=10, fontweight='bold', pad=6)
 
     # Stress subplot
