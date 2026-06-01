@@ -46,8 +46,14 @@ class DamGeometry:
 
         y_vals = [y for _, y in coords]
         y_min  = min(y_vals)
-        height_span = max(y_vals) - y_min
-        tol = max(0.5, height_span * 0.15)
+        y_max  = max(y_vals)
+        height_span = y_max - y_min
+        # tol must cover inclined bases where heel and toe are at different elevations.
+        # We use the larger of: fixed minimum, 15% of height, or the full base
+        # y-span (estimated as difference between the two lowest unique y values).
+        y_sorted = sorted(set(round(y, 6) for _, y in coords))
+        base_span = (y_sorted[1] - y_sorted[0]) if len(y_sorted) >= 2 else 0.0
+        tol = max(0.5, height_span * 0.15, base_span + 0.2)
         base_candidates = [(x, y) for x, y in coords if y <= y_min + tol]
         if len(base_candidates) < 2:
             raise ValueError(
@@ -299,7 +305,7 @@ def build_uplift_pressure_polygon(L, h_us_u, h_ds_u, drainage, Lt):
 
 def compute_dam_weight(geom, mat):
     area, cx, cy = polygon_area_centroid(geom.coordinates)
-    return make_force('Dam Weight', V=mat.unit_weight_dam*area, x=cx, y=cy, stabilising=True)
+    return make_force('Dam Weight', V=mat.unit_weight_dam*area, x=cx, stabilising=True)
 
 
 def compute_water_weight_upstream(geom, mat, wl_us_abs):
@@ -671,6 +677,29 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                               f"is below 1.0 — the dam will slide under "
                               f"this load case.")})
 
+    # ── 6. FS_overturning below 1.0 ──────────────────────────────────────────
+    fo = res['FS_overturning']
+    if fo < 1.0:
+        msgs.append({"type": "alert",
+                     "text": (f"CRITICAL: Overturning factor of safety ({fo:.3f}) "
+                              f"is below 1.0 — the dam is overturning under "
+                              f"this load case.")})
+
+    # ── 7. Net vertical force ≤ 0 (no base contact) ───────────────────────────
+    if res['sum_V'] <= 0:
+        msgs.append({"type": "alert",
+                     "text": (f"Net vertical force is zero or upward "
+                              f"({res['sum_V']:.2f} kN/m). The dam has no "
+                              f"base contact — check uplift and applied forces.")})
+
+    # ── 8. Drainage distance exceeds base width ───────────────────────────────
+    if drainage.include and drainage.distance_from_heel >= L:
+        msgs.append({"type": "warning",
+                     "text": (f"Drainage distance from heel "
+                              f"({drainage.distance_from_heel:.2f} m) ≥ base "
+                              f"width ({L:.2f} m). Drain falls outside the base "
+                              f"— drainage ignored in uplift calculation.")})
+
     return msgs
 
 
@@ -752,21 +781,40 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     pad_us = p_us_max_w + 1.0
     pad_ds = p_ds_max_w + 1.0
 
-    fig_w_in    = 160.0 / 25.4
-    stress_h_in = 1.4
+    # ── Figure sizing: fixed total height = 16 cm, equal-aspect main panel ──
+    # stress subplot has fixed physical height; main panel fills the rest.
+    # Scale (px/m) is computed from the figure width and x-span so that
+    # both axes map the same number of metres to the same number of inches.
+
+    CM_TO_IN     = 1.0 / 2.54
+    FIG_H_IN     = 16.0 * CM_TO_IN        # fixed total height = 16 cm
+    stress_h_in  = 1.4 * CM_TO_IN * 2.54  # 1.4 cm for stress subplot (≈0.55 in)
+    gap_in       = 0.45                    # gap between panels
+
     x_lo = -pad_ds - 0.3
     x_hi =  heel_x + pad_us + 0.3
     x_span = x_hi - x_lo
     y_lo = y_base_ref - uplift_depth - 0.5
     y_hi = dam_top * 1.45
     y_span = y_hi - y_lo
-    main_h_in = (y_span / x_span) * fig_w_in
-    gap_in    = 0.55
-    fig_h_in  = main_h_in + stress_h_in + gap_in
 
-    fig = plt.figure(figsize=(fig_w_in, fig_h_in))
+    # Main panel height in inches (remaining after stress + gap)
+    main_h_in = FIG_H_IN - stress_h_in - gap_in
+    if main_h_in < 1.0:
+        main_h_in = 1.0
+
+    # Width that gives equal aspect: 1 dam-metre = same physical length in x and y
+    # scale = main_h_in / y_span  (inches per metre, y direction)
+    # fig_w_in = x_span * scale
+    scale_in = main_h_in / y_span          # inches per dam-metre
+    fig_w_in = x_span * scale_in           # figure width for equal aspect
+
+    # Clamp width to reasonable range for screen/print
+    fig_w_in = max(5.0, min(fig_w_in, 20.0))
+
+    fig = plt.figure(figsize=(fig_w_in, FIG_H_IN))
     gs2 = fig.add_gridspec(2, 1, height_ratios=[main_h_in, stress_h_in],
-                           hspace=gap_in / fig_h_in)
+                           hspace=gap_in / FIG_H_IN)
     ax  = fig.add_subplot(gs2[0])
     ax2 = fig.add_subplot(gs2[1])
 

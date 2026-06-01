@@ -65,16 +65,18 @@ class LoadCaseRequest(BaseModel):
     drainage_distance_from_heel: float = 2.0
     drainage_reduction_factor:   float = 0.333
 
-    # Silt
+    # Silt — input as absolute elevation; converted to height in endpoint
     silt_include:               bool  = False
-    silt_height_us:             float = 0.0
+    silt_elevation_us:          float = 0.0   # absolute elevation of silt surface
+    silt_height_us:             float = 0.0   # kept for backward compat; overridden
     silt_unit_weight_submerged: float = 9.0
     silt_phi_deg:               float = 30.0
 
-    # Backfill
+    # Backfill — input as absolute elevation; converted to height in endpoint
     backfill_include_pressure:      bool  = False
     backfill_include_weight:        bool  = False
-    backfill_height:                float = 0.0
+    backfill_elevation:             float = 0.0   # absolute elevation of backfill surface
+    backfill_height:                float = 0.0   # kept for backward compat; overridden
     backfill_coeff_pressure:        float = 0.333
     backfill_unit_weight_dry:       float = 18.0
     backfill_unit_weight_wet:       float = 20.0
@@ -173,16 +175,22 @@ def calculate(req: LoadCaseRequest):
             distance_from_heel = req.drainage_distance_from_heel,
             reduction_factor   = req.drainage_reduction_factor,
         )
+        # Convert absolute elevations to heights relative to heel/toe
+        silt_h = (req.silt_elevation_us - geom.heel_elevation
+                  if req.silt_elevation_us > 0 else req.silt_height_us)
+        bf_h   = (req.backfill_elevation - geom.toe_elevation
+                  if req.backfill_elevation > 0 else req.backfill_height)
+
         silt = SiltConfig(
             include               = req.silt_include,
-            height_us             = req.silt_height_us,
+            height_us             = max(silt_h, 0.0),
             unit_weight_submerged = req.silt_unit_weight_submerged,
             phi_deg               = req.silt_phi_deg,
         )
         backfill = BackfillConfig(
             include_pressure      = req.backfill_include_pressure,
             include_weight        = req.backfill_include_weight,
-            height                = req.backfill_height,
+            height                = max(bf_h, 0.0),
             coeff_pressure        = req.backfill_coeff_pressure,
             unit_weight_dry       = req.backfill_unit_weight_dry,
             unit_weight_wet       = req.backfill_unit_weight_wet,
@@ -634,5 +642,543 @@ def export_excel(data: ExportRequest):
             },
         )
 
+    except Exception:
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
+
+
+# =============================================================================
+# MULTI-HEIGHT ANALYSIS MODELS
+# =============================================================================
+
+class SectionInput(BaseModel):
+    label:      str
+    us_toe_x:   float   # absolute x of new upstream heel
+    us_toe_y:   float   # absolute y of new upstream heel
+    ds_toe_x:   float   # absolute x of new downstream toe
+    ds_toe_y:   float   # absolute y of new downstream toe
+    hrv_ds_wl:  float   # HRV downstream water level (absolute)
+    dfv_ds_wl:  float   # DFV downstream water level (absolute)
+    mfv_ds_wl:  float   # MFV downstream water level (absolute)
+
+class MultiHeightRequest(BaseModel):
+    base_request: LoadCaseRequest
+    sections:     List[SectionInput]
+
+class SectionCaseResult(BaseModel):
+    case_name:            str
+    FS_sliding:           float
+    FS_overturning:       float
+    in_middle_third:      bool
+    resultant_check_type: str
+    sigma_toe:            float
+    sigma_heel:           float
+    x_resultant:          float
+    eccentricity:         float
+    tension_length:       float
+    sum_V:                float
+    H_net:                float
+    sum_M_res:            float
+    sum_M_ov:             float
+    forces:               List[ForceRow]
+    messages:             List[dict]
+    plot_base64:          str
+
+class SectionResponse(BaseModel):
+    label:          str
+    heel_elevation: float
+    toe_elevation:  float
+    base_width:     float
+    dam_height:     float
+    results:        List[SectionCaseResult]
+
+class MultiHeightResponse(BaseModel):
+    sections: List[SectionResponse]
+
+
+def _run_section(req: LoadCaseRequest, sec: SectionInput) -> SectionResponse:
+    """
+    Re-run stability at a lower cross-section using the SAME dam face geometry.
+
+    Algorithm (all in ABSOLUTE coordinates):
+      1. Walk the original polygon to extract the upstream face (heel→UTP)
+         and downstream face (toe→DS crest) as ordered vertex lists.
+      2. Interpolate the x-coordinate on each face at the requested new
+         heel elevation (us_toe_y) and toe elevation (ds_toe_y).
+      3. Build the new polygon:
+           new_heel → US face vertices above new_heel_y →
+           crest vertices (UTP→DS crest) →
+           DS face vertices above new_toe_y (descending) →
+           new_toe → (close)
+      4. Pass the new polygon to DamGeometry for stability calculation.
+    """
+    orig_coords = [(p.x, p.y) for p in req.coordinates]
+    utp_orig    = (req.upstream_top_point.x, req.upstream_top_point.y)
+
+    # ── Identify heel and toe in original absolute coords ────────────────────
+    y_min_orig   = min(y for _, y in orig_coords)
+    base_cands   = [(x, y) for x, y in orig_coords if y <= y_min_orig + 0.15]
+    if len(base_cands) < 2:
+        base_cands = sorted(orig_coords, key=lambda p: p[1])[:2]
+
+    toe_abs_pt  = max(base_cands, key=lambda p: abs(p[0] - utp_orig[0]))
+    heel_abs_pt = min(base_cands, key=lambda p: abs(p[0] - utp_orig[0]))
+
+    # ── Find vertex indices ──────────────────────────────────────────────────
+    def nearest_idx(pt, coords):
+        return min(range(len(coords)),
+                   key=lambda i: (coords[i][0]-pt[0])**2 + (coords[i][1]-pt[1])**2)
+
+    n           = len(orig_coords)
+    heel_idx    = nearest_idx(heel_abs_pt, orig_coords)
+    utp_idx     = nearest_idx(utp_orig,    orig_coords)
+    toe_idx     = nearest_idx(toe_abs_pt,  orig_coords)
+
+    top_y       = max(y for _, y in orig_coords)
+    crest_pts   = [(x, y) for x, y in orig_coords if abs(y - top_y) < 1e-6]
+    ds_crest_pt = min(crest_pts, key=lambda p: abs(p[0] - toe_abs_pt[0]))
+    ds_top_idx  = nearest_idx(ds_crest_pt, orig_coords)
+
+    # ── Walk polygon from start→end, pick shorter upward path ───────────────
+    def walk(start, end, direction):
+        path = []; i = start
+        for _ in range(n + 1):
+            path.append(orig_coords[i])
+            if i == end: break
+            i = (i + direction) % n
+        return path
+
+    def best_face(start, end):
+        cands = [walk(start, end, d) for d in [1, -1]]
+        cands = [p for p in cands if p[-1][1] >= p[0][1]]   # must go upward
+        return min(cands, key=len) if cands else walk(start, end, 1)
+
+    us_face_abs = best_face(heel_idx, utp_idx)    # heel → UTP
+    ds_face_abs = best_face(toe_idx,  ds_top_idx) # toe  → DS crest
+
+    # ── Validate: new elevations must be ≥ original base ────────────────────
+    y_heel_new = sec.us_toe_y
+    y_toe_new  = sec.ds_toe_y
+
+    if y_heel_new < heel_abs_pt[1] - 1e-3:
+        raise ValueError(
+            f"Section '{sec.label}': new heel elevation ({y_heel_new:.2f} m) is "
+            f"below the original heel ({heel_abs_pt[1]:.2f} m).")
+    if y_toe_new < toe_abs_pt[1] - 1e-3:
+        raise ValueError(
+            f"Section '{sec.label}': new toe elevation ({y_toe_new:.2f} m) is "
+            f"below the original toe ({toe_abs_pt[1]:.2f} m).")
+    if y_heel_new >= top_y - 1e-3 or y_toe_new >= top_y - 1e-3:
+        raise ValueError(
+            f"Section '{sec.label}': new base elevation is at or above the "
+            f"dam crest ({top_y:.2f} m).")
+
+    # ── Interpolate x on face at given y ─────────────────────────────────────
+    def x_on_face_abs(face, y_target):
+        for i in range(len(face) - 1):
+            x0, y0 = face[i];  x1, y1 = face[i + 1]
+            lo, hi = min(y0, y1), max(y0, y1)
+            if lo - 1e-6 <= y_target <= hi + 1e-6:
+                if abs(y1 - y0) < 1e-9:
+                    return (x0 + x1) / 2.0
+                return x0 + (y_target - y0) / (y1 - y0) * (x1 - x0)
+        return face[0][0]   # below face bottom
+
+    x_heel_new = x_on_face_abs(us_face_abs, y_heel_new)
+    x_toe_new  = x_on_face_abs(ds_face_abs, y_toe_new)
+    new_heel   = (x_heel_new, y_heel_new)
+    new_toe    = (x_toe_new,  y_toe_new)
+
+    # ── Build new polygon ────────────────────────────────────────────────────
+    def approx_eq(a, b):
+        return abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) < 1e-6
+
+    def append_unique(lst, pt):
+        if not lst or not approx_eq(lst[-1], pt):
+            lst.append(pt)
+
+    new_coords = [new_heel]
+
+    # US face: vertices strictly above new_heel_y (already in bottom→top order)
+    for pt in us_face_abs:
+        if pt[1] > y_heel_new + 1e-6:
+            append_unique(new_coords, pt)
+
+    # Crest: walk from utp_idx → ds_top_idx (forward direction along polygon)
+    i = utp_idx
+    for _ in range(n + 1):
+        append_unique(new_coords, orig_coords[i])
+        if i == ds_top_idx:
+            break
+        i = (i + 1) % n
+
+    # DS face: reversed (top→bottom), only vertices strictly above new_toe_y
+    for pt in reversed(ds_face_abs):
+        if pt[1] > y_toe_new + 1e-6:
+            append_unique(new_coords, pt)
+
+    append_unique(new_coords, new_toe)
+
+    if len(new_coords) < 3:
+        raise ValueError(
+            f"Section '{sec.label}': polygon has fewer than 3 vertices after "
+            f"clipping. Check that new base elevations are within the dam body.")
+
+    geom = DamGeometry(coordinates=new_coords, upstream_top_point=utp_orig)
+
+    mat = MaterialProperties(
+        unit_weight_dam   = req.unit_weight_dam,
+        unit_weight_water = req.unit_weight_water,
+        friction_coeff    = req.friction_coeff,
+    )
+    drainage = DrainageConfig(
+        include            = req.drainage_include,
+        distance_from_heel = req.drainage_distance_from_heel,
+        reduction_factor   = req.drainage_reduction_factor,
+    )
+
+    # Silt/backfill: recalculate heights relative to new base
+    silt_h = max((req.silt_elevation_us if req.silt_elevation_us > 0
+                  else req.silt_height_us + geom.heel_elevation) - geom.heel_elevation, 0.0)
+    bf_h   = max((req.backfill_elevation if req.backfill_elevation > 0
+                  else req.backfill_height + geom.toe_elevation) - geom.toe_elevation, 0.0)
+
+    silt = SiltConfig(
+        include               = req.silt_include,
+        height_us             = silt_h,
+        unit_weight_submerged = req.silt_unit_weight_submerged,
+        phi_deg               = req.silt_phi_deg,
+    )
+    backfill = BackfillConfig(
+        include_pressure      = req.backfill_include_pressure,
+        include_weight        = req.backfill_include_weight,
+        height                = bf_h,
+        coeff_pressure        = req.backfill_coeff_pressure,
+        unit_weight_dry       = req.backfill_unit_weight_dry,
+        unit_weight_wet       = req.backfill_unit_weight_wet,
+        unit_weight_submerged = req.backfill_unit_weight_submerged,
+    )
+    rock_bolt = RockBoltConfig(
+        include         = req.rock_bolt_include,
+        force_per_m     = req.rock_bolt_force_per_m,
+        cover_from_heel = req.rock_bolt_cover_from_heel,
+    )
+    rock_anchor = RockAnchorConfig(
+        include         = req.rock_anchor_include,
+        force_per_m     = req.rock_anchor_force_per_m,
+        cover_from_heel = req.rock_anchor_cover_from_heel,
+    )
+    applied = AppliedForceConfig(
+        vertical_forces   = [tuple(v) for v in req.applied_vertical_forces],
+        horizontal_forces = [tuple(h) for h in req.applied_horizontal_forces],
+    )
+
+    # Water levels: US levels same as original; DS levels from section input
+    cases = []
+    if req.run_HRV:
+        cases.append(('HRV',                req.HRV_us, sec.hrv_ds_wl, True))
+    if req.run_DFV:
+        cases.append(('DFV',                req.DFV_us, sec.dfv_ds_wl, True))
+    if req.run_MFV:
+        cases.append(('MFV',                req.MFV_us, sec.mfv_ds_wl, True))
+    if req.run_DFV_no_bolts:
+        cases.append(('DFV (no rock bolts)', req.DFV_us, sec.dfv_ds_wl, False))
+
+    def safe(v):
+        if v == float('inf'):  return 9999.0
+        if v == float('-inf'): return -9999.0
+        return round(v, 4)
+
+    results_out = []
+    for case_name, wl_us, wl_ds, incl_rb in cases:
+        ice_case = IcePressureConfig(
+            include  = req.ice_include and (case_name == 'HRV'),
+            pressure = req.ice_pressure,
+        )
+        res = run_load_case(
+            case_name, geom, mat, wl_us, wl_ds,
+            drainage, silt, backfill, ice_case,
+            rock_bolt, rock_anchor, applied,
+            include_rock_bolts=incl_rb,
+        )
+        plot_b64 = plot_to_base64(res, geom, mat, drainage, silt)
+        forces_out = [
+            ForceRow(
+                name=r['name'], V=round(r['V'],3), H=round(r['H'],3),
+                x_from_toe=round(r['x_from_toe'],4), y_from_toe=round(r['y_from_toe'],4),
+                M_res=round(r['M_res'],3), M_ov=round(r['M_ov'],3),
+                stabilising=r['stabilising'],
+            )
+            for r in res['rows']
+        ]
+        results_out.append(SectionCaseResult(
+            case_name            = res['case_name'],
+            FS_sliding           = safe(res['FS_sliding']),
+            FS_overturning       = safe(res['FS_overturning']),
+            in_middle_third      = res['in_middle_third'],
+            resultant_check_type = res['resultant_check_type'],
+            sigma_toe            = safe(res['sigma_toe']),
+            sigma_heel           = safe(res['sigma_heel']),
+            x_resultant          = safe(res['x_resultant']),
+            eccentricity         = safe(res['eccentricity']),
+            tension_length       = safe(res['tension_length']),
+            sum_V                = safe(res['sum_V']),
+            H_net                = safe(res['H_net']),
+            sum_M_res            = safe(res['sum_M_res']),
+            sum_M_ov             = safe(res['sum_M_ov']),
+            forces               = forces_out,
+            messages             = res.get('messages', []),
+            plot_base64          = plot_b64,
+        ))
+
+    return SectionResponse(
+        label          = sec.label,
+        heel_elevation = geom.heel_elevation,
+        toe_elevation  = geom.toe_elevation,
+        base_width     = round(geom.base_length_horizontal, 3),
+        dam_height     = round(geom.dam_top_elevation_rel, 3),
+        results        = results_out,
+    )
+
+
+@app.post("/calculate_heights", response_model=MultiHeightResponse)
+def calculate_heights(req: MultiHeightRequest):
+    try:
+        sections_out = []
+        for sec in req.sections:
+            sections_out.append(_run_section(req.base_request, sec))
+        return MultiHeightResponse(sections=sections_out)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
+
+
+@app.post("/export_heights")
+def export_heights(data: MultiHeightResponse):
+    """Export multi-height results to Excel — one tab per section × load case."""
+    try:
+        wb = Workbook(); wb.remove(wb.active)
+
+        BLUE_DARK   = "1A3A5C"; BLUE_MID = "2E6DA4"; BLUE_LIGHT = "D6E8F7"
+        GREEN_LIGHT = "D6F0E0"; RED_LIGHT = "FAD7D7"; GRAY_LIGHT = "F5F5F5"
+        WHITE = "FFFFFF"
+
+        def hfill(c): return PatternFill("solid", fgColor=c)
+        def side():   return Side(style="thin", color="AAAAAA")
+        tb = Border(left=side(), right=side(), top=side(), bottom=side())
+
+        def wc(ws, row, col, val, bold=False, fill=None, align='left', color="000000", sz=9):
+            c = ws.cell(row=row, column=col, value=val)
+            c.font = Font(bold=bold, name="Calibri", size=sz, color=color)
+            c.alignment = Alignment(horizontal=align, vertical="center")
+            c.border = tb
+            if fill: c.fill = fill
+            return c
+
+        def nc(ws, row, col, val, fmt='0.00', bold=False, fill=None):
+            c = ws.cell(row=row, column=col, value=val)
+            c.number_format = fmt
+            c.font = Font(bold=bold, name="Calibri", size=9)
+            c.alignment = Alignment(horizontal="right", vertical="center")
+            c.border = tb
+            if fill: c.fill = fill
+            return c
+
+        # ── Summary sheet ─────────────────────────────────────────────────────
+        ws_sum = wb.create_sheet("Summary")
+        ws_sum.sheet_view.showGridLines = False
+        ws_sum.merge_cells("A1:K1")
+        t = ws_sum["A1"]
+        t.value = "MULTI-HEIGHT STABILITY ANALYSIS — SUMMARY"
+        t.font = Font(bold=True, size=13, color=WHITE, name="Calibri")
+        t.fill = hfill(BLUE_DARK)
+        t.alignment = Alignment(horizontal="center", vertical="center")
+        ws_sum.row_dimensions[1].height = 26
+
+        hdrs = ["Section","Load Case","Heel El. (m)","Toe El. (m)","L (m)","Height (m)",
+                "FS Sliding","x_res (m)","FS Overturn","Resultant","σ_toe","σ_heel"]
+        for ci, h in enumerate(hdrs, 1):
+            c = ws_sum.cell(row=3, column=ci, value=h)
+            c.font = Font(bold=True, color=WHITE, name="Calibri", size=9)
+            c.fill = hfill(BLUE_MID)
+            c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            c.border = tb
+        ws_sum.row_dimensions[3].height = 28
+
+        row = 4
+        for sec in data.sections:
+            for res in sec.results:
+                fs_ok  = res.FS_sliding >= 1.5
+                mid_ok = res.in_middle_third
+                rf = hfill(GRAY_LIGHT) if row % 2 == 0 else None
+                wc(ws_sum, row, 1, sec.label, bold=True, fill=rf)
+                wc(ws_sum, row, 2, res.case_name, fill=rf, align='center')
+                nc(ws_sum, row, 3, sec.heel_elevation, '0.0', fill=rf)
+                nc(ws_sum, row, 4, sec.toe_elevation,  '0.0', fill=rf)
+                nc(ws_sum, row, 5, sec.base_width,     '0.00', fill=rf)
+                nc(ws_sum, row, 6, sec.dam_height,     '0.00', fill=rf)
+                nc(ws_sum, row, 7, res.FS_sliding if res.FS_sliding < 9998 else None,
+                   '0.000', fill=hfill(GREEN_LIGHT) if fs_ok else hfill(RED_LIGHT))
+                nc(ws_sum, row, 8, res.x_resultant,     '0.00', fill=rf)   
+                nc(ws_sum, row, 9, res.FS_overturning if res.FS_overturning < 9998 else None,
+                   '0.000', fill=rf)
+                ck = ws_sum.cell(row=row, column=10,
+                                 value="✓ OK" if mid_ok else "✗ OUTSIDE")
+                ck.font = Font(bold=True, name="Calibri", size=10,
+                               color="1A6B3A" if mid_ok else "8B1A1A")
+                ck.fill = hfill(GREEN_LIGHT) if mid_ok else hfill(RED_LIGHT)
+                ck.alignment = Alignment(horizontal="center", vertical="center")
+                ck.border = tb
+                nc(ws_sum, row, 11, res.sigma_toe,  '0.0',
+                   fill=hfill(GREEN_LIGHT) if res.sigma_toe >= 0 else hfill(RED_LIGHT))
+                nc(ws_sum, row, 12, res.sigma_heel, '0.0',
+                   fill=hfill(GREEN_LIGHT) if res.sigma_heel >= 0 else hfill(RED_LIGHT))
+                ws_sum.row_dimensions[row].height = 16
+                row += 1
+
+        for ci, w in enumerate([16,20,12,12,10,10,12,12,14,12,12], 1):
+            ws_sum.column_dimensions[get_column_letter(ci)].width = w
+
+        # ── One sheet per section × load case ────────────────────────────────
+        for sec in data.sections:
+            for res in sec.results:
+                sname = f"{sec.label[:15]}_{res.case_name[:12]}"[:31]
+                ws = wb.create_sheet(sname)
+                ws.sheet_view.showGridLines = False
+
+                # Title
+                ws.merge_cells("A1:H1")
+                t2 = ws["A1"]
+                t2.value = f"{sec.label}  |  Load Case: {res.case_name}"
+                t2.font  = Font(bold=True, size=11, color=WHITE, name="Calibri")
+                t2.fill  = hfill(BLUE_DARK)
+                t2.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[1].height = 24
+
+                # Geometry info
+                ws.merge_cells("A2:H2")
+                g = ws["A2"]
+                g.value = (f"Heel: {sec.heel_elevation:.1f} m  |  "
+                           f"Toe: {sec.toe_elevation:.1f} m  |  "
+                           f"L = {sec.base_width:.2f} m  |  "
+                           f"Height = {sec.dam_height:.2f} m")
+                g.font  = Font(size=9, italic=True, name="Calibri", color=BLUE_DARK)
+                g.fill  = hfill(BLUE_LIGHT)
+                g.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[2].height = 16
+
+                # KPI block
+                kpis = [
+                    ("FS Sliding",     res.FS_sliding,     res.FS_sliding >= 1.5,    '0.000'),
+                    ("FS Overturning", res.FS_overturning, None,                      '0.000'),
+                    ("Resultant",      "✓ OK" if res.in_middle_third else "✗ OUTSIDE",
+                                       res.in_middle_third, '@'),
+                    ("σ_toe (kN/m²)",  res.sigma_toe,      res.sigma_toe >= 0,        '0.00'),
+                    ("σ_heel (kN/m²)", res.sigma_heel,     res.sigma_heel >= 0,       '0.00'),
+                    ("x_res (m)",      res.x_resultant,    None,                      '0.000'),
+                    ("e (m)",          res.eccentricity,   None,                      '0.000'),
+                    ("Tension (m)",    res.tension_length, res.tension_length < 0.001,'0.000'),
+                ]
+                ws.merge_cells("A4:B4")
+                kh = ws["A4"]
+                kh.value = "RESULTS SUMMARY"
+                kh.font  = Font(bold=True, size=9, color=WHITE, name="Calibri")
+                kh.fill  = hfill(BLUE_MID)
+                kh.alignment = Alignment(horizontal="center", vertical="center")
+                ws.row_dimensions[4].height = 18
+
+                for ki, (lbl, val, ok, fmt) in enumerate(kpis, 5):
+                    fc = (hfill(GREEN_LIGHT) if ok is True
+                          else hfill(RED_LIGHT) if ok is False
+                          else hfill(GRAY_LIGHT))
+                    wc(ws, ki, 1, lbl, bold=True, fill=hfill(BLUE_LIGHT))
+                    c = ws.cell(row=ki, column=2, value=val)
+                    c.number_format = fmt
+                    if isinstance(val, float) and val >= 9998: c.value = "∞"
+                    c.font = Font(bold=True, name="Calibri", size=9)
+                    c.fill = fc
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                    c.border = tb
+                    ws.row_dimensions[ki].height = 15
+
+                ws.column_dimensions['A'].width = 20
+                ws.column_dimensions['B'].width = 14
+
+                # Force table starting at col D, row 4
+                fhdr = ["Force","Stab/Dest","V (kN/m)","H (kN/m)",
+                        "x_toe (m)","y (m)","M_res","M_ov"]
+                for ci, h in enumerate(fhdr, 4):
+                    c = ws.cell(row=4, column=ci, value=h)
+                    c.font = Font(bold=True, color=WHITE, name="Calibri", size=9)
+                    c.fill = hfill(BLUE_MID)
+                    c.alignment = Alignment(horizontal="center", vertical="center")
+                    c.border = tb
+                ws.row_dimensions[4].height = 24
+
+                for fi, f in enumerate(res.forces, 5):
+                    rf2 = hfill(GREEN_LIGHT) if f.stabilising else hfill(RED_LIGHT)
+                    wc(ws, fi, 4, f.name, fill=rf2)
+                    wc(ws, fi, 5, "Stab" if f.stabilising else "Dest",
+                       fill=rf2, align='center', bold=True,
+                       color="1A6B3A" if f.stabilising else "8B1A1A")
+                    for ci2, val2, fmt2 in [(6,f.V,'0.00'),(7,f.H,'0.00'),
+                                             (8,f.x_from_toe,'0.000'),(9,f.y_from_toe,'0.000'),
+                                             (10,f.M_res,'0.00'),(11,f.M_ov,'0.00')]:
+                        nc(ws, fi, ci2, val2, fmt2, fill=rf2)
+                    ws.row_dimensions[fi].height = 14
+
+                tot = 5 + len(res.forces)
+                wc(ws, tot, 4, "RESULTANT", bold=True, fill=hfill(BLUE_LIGHT))
+                wc(ws, tot, 5, "", fill=hfill(BLUE_LIGHT))
+                nc(ws, tot, 6, res.sum_V,    '0.00', bold=True, fill=hfill(BLUE_LIGHT))
+                nc(ws, tot, 7, res.H_net,    '0.00', bold=True, fill=hfill(BLUE_LIGHT))
+                for ci2 in [8,9,10,11]: wc(ws, tot, ci2, "", fill=hfill(BLUE_LIGHT))
+                nc(ws, tot, 10, res.sum_M_res, '0.00', bold=True, fill=hfill(BLUE_LIGHT))
+                nc(ws, tot, 11, res.sum_M_ov,  '0.00', bold=True, fill=hfill(BLUE_LIGHT))
+                ws.row_dimensions[tot].height = 17
+
+                for ci2, w2 in enumerate([28,12,11,11,11,9,13,13],4):
+                    ws.column_dimensions[get_column_letter(ci2)].width = w2
+
+                # Messages
+                mr = tot + 2
+                for m in (res.messages or []):
+                    mtype = m.get('type','info') if isinstance(m,dict) else 'info'
+                    mtext = m.get('text','') if isinstance(m,dict) else str(m)
+                    icons = {"info":"ℹ","warning":"⚠","alert":"🚨"}
+                    fills = {"info":"D6E8F7","warning":"FFF3CD","alert":"FAD7D7"}
+                    cols  = {"info":"1A3A5C","warning":"7A5000","alert":"8B1A1A"}
+                    ws.merge_cells(f"A{mr}:K{mr}")
+                    mc = ws[f"A{mr}"]
+                    mc.value = f"{icons.get(mtype,'ℹ')}  {mtext}"
+                    mc.font  = Font(name="Calibri", size=9, color=cols.get(mtype,"1A3A5C"))
+                    mc.fill  = hfill(fills.get(mtype,"D6E8F7"))
+                    mc.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+                    mc.border = tb
+                    ws.row_dimensions[mr].height = 28
+                    mr += 1
+
+                # Plot
+                if res.plot_base64:
+                    img_bytes = base64.b64decode(res.plot_base64)
+                    img_buf   = io.BytesIO(img_bytes)
+                    img       = XLImage(img_buf)
+                    
+                    orig_width  = img.width
+                    orig_height = img.height
+
+                    img.width  = 360
+                    img.height = int(360 * orig_height / orig_width) if img.width else 450
+                    ws.add_image(img, f"A{mr + 1}")
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition":
+                     'attachment; filename="dam_multi_height_results.xlsx"'},
+        )
     except Exception:
         raise HTTPException(status_code=500, detail=traceback.format_exc())
