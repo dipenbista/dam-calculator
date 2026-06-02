@@ -329,27 +329,19 @@
 8, 107
 12, 100</textarea>
       <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
-        <b>Upstream top point</b> — the highest vertex on the upstream face
-        (used to distinguish upstream from downstream). Auto-detected from
-        the highest-y vertex; override below only if auto-detection is wrong.
+        <b>Upstream top point</b> — the corner where the crest meets the
+        upstream face. Used to identify the upstream and downstream faces,
+        and to determine the heel (lowest point on the upstream face) and
+        toe (lowest point on the downstream face). Must be set correctly.
       </p>
-      <div class="toggle-row" style="margin-top:6px">
-        <label class="switch">
-          <input type="checkbox" id="utp_override" onchange="toggleSub('utp_sub',this)">
-          <span class="slider"></span>
-        </label>
-        <label>Override auto-detect</label>
-      </div>
-      <div class="sub-fields collapsed" id="utp_sub">
-        <div class="row2">
-          <div>
-            <label>Upstream top point X</label>
-            <input type="number" id="utp_x" value="5" step="0.1">
-          </div>
-          <div>
-            <label>Upstream top point Y</label>
-            <input type="number" id="utp_y" value="109" step="0.1">
-          </div>
+      <div class="row2" style="margin-top:6px">
+        <div>
+          <label>Upstream top point X</label>
+          <input type="number" id="utp_x" value="5" step="0.1">
+        </div>
+        <div>
+          <label>Upstream top point Y</label>
+          <input type="number" id="utp_y" value="109" step="0.1">
         </div>
       </div>
     </div>
@@ -1061,28 +1053,9 @@ function switchTab(idx) {
   document.querySelectorAll('.tab-pane').forEach((p,i) => p.classList.toggle('active', i===idx));
 }
 
-// ── Auto-detect upstream top point ──────────────────────
+// ── Upstream top point (always user-specified) ──────────
 function computeUTP() {
-  // If user override is on, use manual values
-  if (document.getElementById('utp_override').checked) {
-    return { x: n('utp_x'), y: n('utp_y') };
-  }
-  // Otherwise: find the highest-y vertex on the upstream side.
-  // "Upstream side" = vertices with x closer to the min-x side of the polygon.
-  // Strategy: take the highest vertex overall — for a standard gravity dam
-  // the upstream crest is always the highest upstream point.
-  const rawCoords = parseCoordsQuiet(document.getElementById('coords').value);
-  if (!rawCoords || rawCoords.length < 3) return { x: n('utp_x'), y: n('utp_y') };
-
-  // Find the vertex with maximum y (highest elevation)
-  // If there are ties (flat crest), take the one with smallest x (upstream side)
-  let best = rawCoords[0];
-  for (const p of rawCoords) {
-    if (p.y > best.y || (Math.abs(p.y - best.y) < 1e-6 && p.x < best.x)) {
-      best = p;
-    }
-  }
-  return { x: best.x, y: best.y };
+  return { x: n('utp_x'), y: n('utp_y') };
 }
 
 function toggleRbLimit() {
@@ -1164,65 +1137,29 @@ function updateLivePreview() {
   const drainOn= document.getElementById('drain_on').checked;
   const drainD = parseFloat(document.getElementById('drain_dist').value) || 0;
 
-  // ── Dam geometry — heel/toe detection (matches calculator.py option 3) ───
+  // ── Dam geometry — heel/toe detection ────────────────────────────────────
+  // Rule: x ≤ utpX → upstream face; x > utpX → downstream face.
+  // Heel = lowest y on upstream face. Toe = lowest y on downstream face.
   const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
   const baseY = Math.min(...ys);
   const topY  = Math.max(...ys);
+  const n     = pts.length;
 
-  // Find UTP index (closest vertex to utpX, utpY)
-  const utpIdx = pts.reduce((bi,p,i) =>
-    (Math.hypot(p.x-utpX,p.y-utpY) < Math.hypot(pts[bi].x-utpX,pts[bi].y-utpY)) ? i : bi, 0);
+  const usFace = pts.filter(p => p.x <= utpX);
+  const dsFace = pts.filter(p => p.x >  utpX);
+  const heelPt = usFace.reduce((a,p) => p.y < a.y ? p : a, usFace[0] || pts[0]);
+  const toePt  = dsFace.reduce((a,p) => p.y < a.y ? p : a, dsFace[0] || pts[pts.length-1]);
 
-  // Re-index polygon starting at UTP
-  const n = pts.length;
-  const order = Array.from({length:n}, (_,k) => (utpIdx+k)%n);
-  const ordYs = order.map(i => pts[i].y);
-
-  // Find "valleys" — local minima in y along the walk (excluding UTP at index 0)
-  const valleys = [];
-  for (let p=1; p<n; p++) {
-    const prev = ordYs[(p-1+n)%n], next = ordYs[(p+1)%n];
-    if (ordYs[p] <= prev+1e-9 && ordYs[p] <= next+1e-9) valleys.push(p);
-  }
-
-  let idxA, idxB;
-  if (valleys.length >= 2) {
-    valleys.sort((a,b) => ordYs[a]-ordYs[b]);
-    idxA = order[valleys[0]]; idxB = order[valleys[1]];
-  } else {
-    // Fallback: two lowest vertices
-    const sorted = [...pts].map((_,i)=>i).sort((a,b)=>pts[a].y-pts[b].y);
-    idxA = sorted[0]; idxB = sorted[1];
-  }
-
-  // Disambiguate heel vs toe: the UTP's steeper-dropping neighbour goes toward heel
-  const nbFwd = pts[(utpIdx+1)%n], nbBwd = pts[(utpIdx-1+n)%n];
-  const dropFwd = utpY - nbFwd.y, dropBwd = utpY - nbBwd.y;
-  const usDir = dropFwd >= dropBwd ? 1 : -1;
-
-  // Walk from UTP in usDir; first base corner reached is heel
-  let heelPt = null, toePt = null;
-  {
-    let i = utpIdx;
-    for (let s=0; s<n; s++) {
-      i = (i + usDir + n) % n;
-      if (i === idxA) { heelPt = pts[idxA]; toePt = pts[idxB]; break; }
-      if (i === idxB) { heelPt = pts[idxB]; toePt = pts[idxA]; break; }
-    }
-    if (!heelPt) { heelPt = pts[idxA]; toePt = pts[idxB]; }
-  }
-
-  const baseWidth = heelPt && toePt ? Math.abs(toePt.x - heelPt.x) : null;
+  const baseWidth = Math.abs(toePt.x - heelPt.x);
   const damHeight = topY - baseY;
 
-  // baseYtol is still used below for face-point filtering
+  // baseYtol used below for face-point filtering
   const baseYtol = Math.max(0.5, (topY - baseY) * 0.15);
 
-  // Upstream face: points from heel up to utp (monotonically increasing y)
-  // sorted by y ascending, filtered to US side
-  const heelX = heelPt ? heelPt.x : utpX;
-  const toeX  = toePt  ? toePt.x  : 0;
-  const isUpstream = (px) => Math.sign(px - toeX) === Math.sign(heelX - toeX);
+  // Face split for water/silt line interpolation
+  const heelX = heelPt.x;
+  const toeX  = toePt.x;
+  const isUpstream = (px) => px <= utpX;
 
   // Find x on upstream face at given absolute y by linear interpolation
   function xOnFaceAtY(facePoints, targetY) {
@@ -1510,7 +1447,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateLivePreview);
   });
-  ['silt_on','bf_p_on','rb_on','ra_on','drain_on','utp_override','rb_limit_on'].forEach(id => {
+  ['silt_on','bf_p_on','rb_on','ra_on','drain_on','rb_limit_on'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', updateLivePreview);
   });
