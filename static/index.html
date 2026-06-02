@@ -47,8 +47,11 @@
   #live-svg-container {
     width: 100%; background: #e8f4fb;
     border: 1px solid #b0cee8; border-radius: 6px; overflow: hidden;
+    min-height: 200px;
   }
-  #live-svg-container svg { width: 100%; display: block; }
+  #live-svg-container svg {
+    width: 100%; height: auto; display: block;
+  }
   #live-preview-hint {
     font-size: 0.72rem; color: #7a8a9a;
     text-align: center; font-style: italic;
@@ -314,13 +317,17 @@
     </div>
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
-      <textarea id="coords" rows="14">0, 87.8
-0, 101.8
-2, 101.8
-13.2, 87.8
-	
-	
-	</textarea>
+      <textarea id="coords" rows="12">0, 100
+0, 101
+2, 101
+4, 106
+5, 108
+5, 109
+5.4, 109
+5.4, 108
+7, 108
+8, 107
+12, 100</textarea>
       <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
         <b>Upstream top point</b> — the highest vertex on the upstream face
         (used to distinguish upstream from downstream). Auto-detected from
@@ -337,11 +344,11 @@
         <div class="row2">
           <div>
             <label>Upstream top point X</label>
-            <input type="number" id="utp_x" value="0" step="0.1">
+            <input type="number" id="utp_x" value="5" step="0.1">
           </div>
           <div>
             <label>Upstream top point Y</label>
-            <input type="number" id="utp_y" value="101.8" step="0.1">
+            <input type="number" id="utp_y" value="109" step="0.1">
           </div>
         </div>
       </div>
@@ -354,20 +361,20 @@
       💧 Water Levels (absolute elevation) <span class="toggle">▾</span>
     </div>
     <div class="card-body">
-      <label>HRV — Upstream / Downstream</label>
+      <label>HRV+IS — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="101.18" step="0.1" placeholder="US">
-        <input type="number" id="HRV_ds" value="87.8" step="0.1" placeholder="DS">
+        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
+        <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="101.55" step="0.1" placeholder="US">
-        <input type="number" id="DFV_ds" value="87.8" step="0.1" placeholder="DS">
+        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
+        <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="101.75" step="0.1" placeholder="US">
-        <input type="number" id="MFV_ds" value="87.8" step="0.1" placeholder="DS">
+        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
       </div>
     </div>
   </div>
@@ -379,7 +386,7 @@
     </div>
     <div class="card-body">
       <label>Unit weight of dam (kN/m³)</label>
-      <input type="number" id="uw_dam"   value="23"  step="0.1">
+      <input type="number" id="uw_dam"   value="24"  step="0.1">
       <label>Unit weight of water (kN/m³)</label>
       <input type="number" id="uw_water" value="10"  step="0.1">
       <label>Friction coefficient (μ)</label>
@@ -420,7 +427,7 @@
       </div>
       <div class="sub-fields" id="silt_sub">
         <label>Silt surface elevation (m absolute)</label>
-        <input type="number" id="silt_h"  value="90.8" step="0.1">
+        <input type="number" id="silt_h"  value="102.0" step="0.1">
         <label>Submerged unit weight (kN/m³)</label>
         <input type="number" id="silt_uw" value="9.0" step="0.1">
         <label>Friction angle φ (°)</label>
@@ -467,7 +474,7 @@
       <div class="toggle-row">
         <label class="switch"><input type="checkbox" id="ice_on" checked onchange="toggleSub('ice_sub',this)">
           <span class="slider"></span></label>
-        <label>Include ice pressure (HRV only)</label>
+        <label>Include ice pressure (HRV+IS only)</label>
       </div>
       <div class="sub-fields" id="ice_sub">
         <label>Ice pressure (kN/m)</label>
@@ -492,6 +499,21 @@
         <input type="number" id="rb_force" value="144" step="1">
         <label>Cover from heel (m)</label>
         <input type="number" id="rb_cover" value="0.5" step="0.1">
+        <div class="toggle-row" style="margin-top:8px">
+          <label class="switch">
+            <input type="checkbox" id="rb_limit_on" checked onchange="toggleRbLimit()">
+            <span class="slider"></span>
+          </label>
+          <label>Apply depth limit</label>
+        </div>
+        <div id="rb_limit_sub">
+          <label>Depth limit (m)
+            <span style="font-size:0.72rem;color:#888;font-weight:400">
+              — rock bolts excluded when HRV depth exceeds this
+            </span>
+          </label>
+          <input type="number" id="rb_limit" value="7.0" step="0.5" min="0">
+        </div>
       </div>
     </div>
   </div>
@@ -580,7 +602,7 @@
     <div class="card-body">
       <div class="toggle-row">
         <label class="switch"><input type="checkbox" id="run_HRV" checked><span class="slider"></span></label>
-        <label>HRV — High Reservoir (normal)</label>
+        <label>HRV+IS — High Reservoir + Ice &amp; Snow</label>
       </div>
       <div class="toggle-row">
         <label class="switch"><input type="checkbox" id="run_DFV" checked><span class="slider"></span></label>
@@ -613,7 +635,7 @@
 
     <!-- SVG canvas -->
     <div id="live-svg-container">
-      <svg id="live-svg" viewBox="0 0 310 420" xmlns="http://www.w3.org/2000/svg"></svg>
+      <svg id="live-svg" viewBox="0 0 310 420" width="310" height="420" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto"></svg>
     </div>
 
     <!-- Geometry stats -->
@@ -622,7 +644,7 @@
       <span class="stat-lbl">Dam height</span>    <span class="stat-val" id="ps-height">—</span>
       <span class="stat-lbl">Toe elev</span>      <span class="stat-val" id="ps-toe">—</span>
       <span class="stat-lbl">Heel elev</span>     <span class="stat-val" id="ps-heel">—</span>
-      <span class="stat-lbl">HRV US / DS</span>   <span class="stat-val" id="ps-hrv">—</span>
+      <span class="stat-lbl">HRV+IS US / DS</span>   <span class="stat-val" id="ps-hrv">—</span>
       <span class="stat-lbl">DFV US / DS</span>   <span class="stat-val" id="ps-dfv">—</span>
       <span class="stat-lbl">MFV US / DS</span>   <span class="stat-val" id="ps-mfv">—</span>
       <span class="stat-lbl">Vertices</span>       <span class="stat-val" id="ps-pts">—</span>
@@ -922,7 +944,7 @@ function renderMHResults(data) {
       const fsDisp     = res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3);
       const foDisp     = res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3);
       return `<tr style="background:${bg}">
-        <td style="padding:5px 8px;font-weight:600;color:${color}">${res.case_name}</td>
+        <td style="padding:5px 8px;font-weight:600;color:${color}">${displayCaseName(res.case_name)}</td>
         <td style="padding:5px 8px;text-align:right">${fsDisp}</td>
         <td style="padding:5px 8px;text-align:right">${foDisp}</td>
         <td style="padding:5px 8px;text-align:center;font-weight:600;color:${color}">
@@ -968,7 +990,7 @@ async function downloadExcelMH() {
     const resp = await fetch('/export_heights', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(lastMHData),
+      body:    JSON.stringify({ main: lastResponseData, multi: lastMHData }),
     });
     if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail); }
     const blob = await resp.blob();
@@ -1063,6 +1085,13 @@ function computeUTP() {
   return { x: best.x, y: best.y };
 }
 
+function toggleRbLimit() {
+  const on  = document.getElementById('rb_limit_on').checked;
+  const sub = document.getElementById('rb_limit_sub');
+  sub.style.opacity     = on ? '1'        : '0.4';
+  sub.style.pointerEvents = on ? 'auto'   : 'none';
+}
+
 function toggleCard(head) {
   const body   = head.nextElementSibling;
   const toggle = head.querySelector('.toggle');
@@ -1105,7 +1134,10 @@ function updateLivePreview() {
 
   if (pts.length < 3) {
     svg.setAttribute('viewBox', '0 0 310 420');
-    svg.innerHTML = '<text x="155" y="210" text-anchor="middle" fill="#aaa" font-size="13">Need ≥ 3 coordinates</text>';
+    const _parsed0 = new DOMParser().parseFromString(
+      `<svg xmlns="http://www.w3.org/2000/svg"><text x="155" y="210" text-anchor="middle" fill="#aaa" font-size="13">Need ≥ 3 coordinates</text></svg>`,
+      'image/svg+xml').documentElement;
+    svg.replaceChildren(..._parsed0.childNodes);
     hint.textContent = 'Enter coordinates to see dam outline';
     ['ps-base','ps-height','ps-toe','ps-heel','ps-hrv','ps-dfv','ps-mfv','ps-pts'].forEach(id => setStat(id,'—'));
     return;
@@ -1123,24 +1155,68 @@ function updateLivePreview() {
   const siltElev  = parseFloat(document.getElementById('silt_h').value) || 0;  // absolute elevation
   const bfPOn     = document.getElementById('bf_p_on').checked;
   const bfElev    = parseFloat(document.getElementById('bf_h').value) || 0;    // absolute elevation
-  const utpX   = parseFloat(document.getElementById('utp_x').value);
-  const utpY   = parseFloat(document.getElementById('utp_y').value);
+  // Use same UTP logic as the calculation (auto-detect or manual override)
+  const _utp  = computeUTP();
+  const utpX  = _utp.x;
+  const utpY  = _utp.y;
   const rbOn   = document.getElementById('rb_on').checked;
   const rbCover= parseFloat(document.getElementById('rb_cover').value) || 0;
   const drainOn= document.getElementById('drain_on').checked;
   const drainD = parseFloat(document.getElementById('drain_dist').value) || 0;
 
-  // ── Dam geometry ─────────────────────────────────────────────────────────
+  // ── Dam geometry — heel/toe detection (matches calculator.py option 3) ───
   const xs = pts.map(p=>p.x), ys = pts.map(p=>p.y);
   const baseY = Math.min(...ys);
   const topY  = Math.max(...ys);
-  // Heel = base candidate closest in X to utp; Toe = farthest
-  const baseYtol = Math.max(0.5, (topY-baseY)*0.15);
-  const baseCands = pts.filter(p => p.y <= baseY + baseYtol);
-  const heelPt = baseCands.reduce((a,p)=>Math.abs(p.x-utpX)<Math.abs(a.x-utpX)?p:a, baseCands[0]||{x:Infinity,y:baseY});
-  const toePt  = baseCands.reduce((a,p)=>Math.abs(p.x-utpX)>Math.abs(a.x-utpX)?p:a, baseCands[0]||{x:-Infinity,y:baseY});
-  const baseWidth = (heelPt && toePt) ? Math.abs(toePt.x - heelPt.x) : null;
+
+  // Find UTP index (closest vertex to utpX, utpY)
+  const utpIdx = pts.reduce((bi,p,i) =>
+    (Math.hypot(p.x-utpX,p.y-utpY) < Math.hypot(pts[bi].x-utpX,pts[bi].y-utpY)) ? i : bi, 0);
+
+  // Re-index polygon starting at UTP
+  const n = pts.length;
+  const order = Array.from({length:n}, (_,k) => (utpIdx+k)%n);
+  const ordYs = order.map(i => pts[i].y);
+
+  // Find "valleys" — local minima in y along the walk (excluding UTP at index 0)
+  const valleys = [];
+  for (let p=1; p<n; p++) {
+    const prev = ordYs[(p-1+n)%n], next = ordYs[(p+1)%n];
+    if (ordYs[p] <= prev+1e-9 && ordYs[p] <= next+1e-9) valleys.push(p);
+  }
+
+  let idxA, idxB;
+  if (valleys.length >= 2) {
+    valleys.sort((a,b) => ordYs[a]-ordYs[b]);
+    idxA = order[valleys[0]]; idxB = order[valleys[1]];
+  } else {
+    // Fallback: two lowest vertices
+    const sorted = [...pts].map((_,i)=>i).sort((a,b)=>pts[a].y-pts[b].y);
+    idxA = sorted[0]; idxB = sorted[1];
+  }
+
+  // Disambiguate heel vs toe: the UTP's steeper-dropping neighbour goes toward heel
+  const nbFwd = pts[(utpIdx+1)%n], nbBwd = pts[(utpIdx-1+n)%n];
+  const dropFwd = utpY - nbFwd.y, dropBwd = utpY - nbBwd.y;
+  const usDir = dropFwd >= dropBwd ? 1 : -1;
+
+  // Walk from UTP in usDir; first base corner reached is heel
+  let heelPt = null, toePt = null;
+  {
+    let i = utpIdx;
+    for (let s=0; s<n; s++) {
+      i = (i + usDir + n) % n;
+      if (i === idxA) { heelPt = pts[idxA]; toePt = pts[idxB]; break; }
+      if (i === idxB) { heelPt = pts[idxB]; toePt = pts[idxA]; break; }
+    }
+    if (!heelPt) { heelPt = pts[idxA]; toePt = pts[idxB]; }
+  }
+
+  const baseWidth = heelPt && toePt ? Math.abs(toePt.x - heelPt.x) : null;
   const damHeight = topY - baseY;
+
+  // baseYtol is still used below for face-point filtering
+  const baseYtol = Math.max(0.5, (topY - baseY) * 0.15);
 
   // Upstream face: points from heel up to utp (monotonically increasing y)
   // sorted by y ascending, filtered to US side
@@ -1262,7 +1338,7 @@ function updateLivePreview() {
 
   // ── Water level lines: US lines stop at upstream face, DS from DS face rightward ──
   const wlDefs = [
-    {us:HRV_us, ds:HRV_ds, label:'HRV', color:'#1361b5', dash:'none', lw:1.6},
+    {us:HRV_us, ds:HRV_ds, label:'HRV+IS', color:'#1361b5', dash:'none', lw:1.6},
     {us:DFV_us, ds:DFV_ds, label:'DFV', color:'#2980b9', dash:'7,4',  lw:1.1},
     {us:MFV_us, ds:MFV_ds, label:'MFV', color:'#5dade2', dash:'3,3',  lw:1.0},
   ];
@@ -1314,14 +1390,15 @@ function updateLivePreview() {
   });
 
   // ── Rock bolt / rock anchor vertical line ─────────────────────────────────
-  if (rbOn && !isNaN(utpX)) {
-    // Rock bolt x in world coords: heel x - cover from heel (toward toe)
-    const sign  = (heelX - toeX) > 0 ? -1 : 1;  // direction from heel toward toe
-    const rbX   = heelX + sign * rbCover;          // in world x
-    const {sx:rx} = toSvg(rbX, baseY);
+  if (rbOn && heelPt) {
+    // Rock bolt x: heel x + cover distance toward toe (in world coords)
+    const signToToe = (toeX - heelX) > 0 ? 1 : -1;   // direction heel→toe
+    const rbX   = heelX + signToToe * rbCover;          // world x
+    const rbY   = heelPt.y;                              // at heel elevation
+    const {sx:rx} = toSvg(rbX, rbY);
     // Extends 1.5 m up into dam and 2 m below base
-    const {sy:ryTop} = toSvg(rbX, baseY + 1.5);
-    const {sy:ryBot} = toSvg(rbX, baseY - 2.0);
+    const {sy:ryTop} = toSvg(rbX, rbY + 1.5);
+    const {sy:ryBot} = toSvg(rbX, rbY - 2.0);
     html += `<line x1="${rx}" y1="${ryTop}" x2="${rx}" y2="${ryBot}"
       stroke="#b5451b" stroke-width="2.5" stroke-dasharray="3,2"/>`;
     // Bolt head symbol (small square at top of dam)
@@ -1332,12 +1409,14 @@ function updateLivePreview() {
   }
 
   // ── Drainage: small rectangle symbol at drain location ───────────────────
-  if (drainOn && !isNaN(utpX)) {
-    const sign  = (heelX - toeX) > 0 ? -1 : 1;
-    const drX   = heelX + sign * drainD;            // in world x
-    const {sx:dx_s} = toSvg(drX, baseY);
-    const {sy:dyTop} = toSvg(drX, baseY + 1.0);
-    const {sy:dyBot} = toSvg(drX, baseY - 0.5);
+  if (drainOn && heelPt && toePt) {
+    // Drain is 'drainD' metres from heel along the base (toward toe)
+    const frac   = Math.min(drainD / Math.max(baseWidth, 0.01), 1.0);
+    const drX    = heelX + frac * (toeX - heelX);  // world x
+    const drY    = heelPt.y + frac * (toePt.y - heelPt.y);  // world y (interpolated along base)
+    const {sx:dx_s} = toSvg(drX, drY);
+    const {sy:dyTop} = toSvg(drX, drY + 1.0);
+    const {sy:dyBot} = toSvg(drX, drY - 0.5);
     // Drain curtain: dashed vertical with a small rectangle frame
     html += `<line x1="${dx_s}" y1="${dyTop}" x2="${dx_s}" y2="${dyBot}"
       stroke="#2874a6" stroke-width="1.5" stroke-dasharray="2,2"/>`;
@@ -1357,8 +1436,8 @@ function updateLivePreview() {
   // ── Y-axis elevation ticks ────────────────────────────────────────────────
   const labelElevs = [...new Set(
     [baseY, topY, ...allWL,
-     siltOn && siltElev > 0 ? siltElev : null,
-	bfPOn && bfElev > 0 ? bfElev : null]
+     siltOn && siltElev > baseY ? siltElev : null,
+     bfPOn  && bfElev  > baseY ? bfElev   : null]
     .filter(v=>v!==null&&!isNaN(v))
   )].sort((a,b)=>a-b);
 
@@ -1396,7 +1475,17 @@ function updateLivePreview() {
   html += `<text x="${barX+barPx/2}" y="${barY-5}" fill="#555" font-size="7.5" text-anchor="middle">${barWorld} m</text>`;
 
   svg.setAttribute('viewBox',`0 0 ${SVG_W} ${SVG_H}`);
-  svg.innerHTML = html;
+  // Use DOMParser to set SVG content — svg.innerHTML is unreliable in some browsers
+  // because SVG elements require proper XML namespace handling.
+  const _svgDoc = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg">${html}</svg>`, 'image/svg+xml');
+  const _svgRoot = _svgDoc.documentElement;
+  // Check for parse error
+  if (_svgRoot.nodeName === 'parsererror') {
+    svg.innerHTML = html;  // fallback
+  } else {
+    svg.replaceChildren(...Array.from(_svgRoot.childNodes));
+  }
   hint.textContent = `1:1 scale · ${pts.length} pts`;
 
   setStat('ps-base',   baseWidth!=null ? baseWidth.toFixed(2)+' m' : '—');
@@ -1415,13 +1504,13 @@ window.addEventListener('DOMContentLoaded', () => {
     'coords','utp_x','utp_y',
     'HRV_us','HRV_ds','DFV_us','DFV_ds','MFV_us','MFV_ds',
     'silt_h','bf_h',
-    'rb_cover','rb_force','drain_dist',
+    'rb_cover','rb_force','drain_dist','rb_limit',
   ];
   liveIds.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateLivePreview);
   });
-  ['silt_on','bf_p_on','rb_on','ra_on','drain_on'].forEach(id => {
+  ['silt_on','bf_p_on','rb_on','ra_on','drain_on','utp_override','rb_limit_on'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', updateLivePreview);
   });
@@ -1491,9 +1580,11 @@ async function runCalc() {
       ice_include:  cb('ice_on'),
       ice_pressure: n('ice_p'),
 
-      rock_bolt_include:         cb('rb_on'),
-      rock_bolt_force_per_m:     n('rb_force'),
-      rock_bolt_cover_from_heel: n('rb_cover'),
+      rock_bolt_include:              cb('rb_on'),
+      rock_bolt_force_per_m:          n('rb_force'),
+      rock_bolt_cover_from_heel:      n('rb_cover'),
+      rock_bolt_apply_depth_limit:    cb('rb_limit_on'),
+      rock_bolt_depth_limit:          n('rb_limit'),
 
       rock_anchor_include:         cb('ra_on'),
       rock_anchor_force_per_m:     n('ra_force'),
@@ -1537,6 +1628,11 @@ async function runCalc() {
 }
 
 // ── Render results ───────────────────────────────────────
+// Map internal case names to display names
+function displayCaseName(name) {
+  return name === 'HRV' ? 'HRV+IS' : name;
+}
+
 function renderResults(data) {
   const geom = data.geometry;
 
@@ -1558,7 +1654,7 @@ function renderResults(data) {
     // Tab button
     const btn = document.createElement('button');
     btn.className  = 'tab-btn' + (idx===0 ? ' active' : '');
-    btn.textContent = res.case_name;
+    btn.textContent = displayCaseName(res.case_name);
     btn.onclick    = () => switchTab(idx);
     tabBar.appendChild(btn);
 
@@ -1644,8 +1740,12 @@ function renderResults(data) {
         </table>
       </div>`;
 
-    // ── Plot ─────────────────────────────────────────────
-    const plotHtml = `<img class="plot-img" src="data:image/png;base64,${res.plot_base64}" alt="Dam plot">`;
+    // ── Plots (dam + stress, stacked) ────────────────────
+    const damSrc    = res.plot_dam_base64    || res.plot_base64 || '';
+    const stressSrc = res.plot_stress_base64 || '';
+    let plotHtml = '';
+    if (damSrc)    plotHtml += `<img class="plot-img" src="data:image/png;base64,${damSrc}" alt="Dam cross-section" style="display:block;margin-bottom:8px">`;
+    if (stressSrc) plotHtml += `<img class="plot-img" src="data:image/png;base64,${stressSrc}" alt="Base stress">`;
 
     // ── Assemble pane ────────────────────────────────────
     const pane = document.createElement('div');
@@ -1654,7 +1754,7 @@ function renderResults(data) {
 
     pane.innerHTML = `
       ${idx===0 ? warnHtml : ''}
-      <h3 style="margin-bottom:12px;color:#1a3a5c">Load Case: ${res.case_name}</h3>
+      <h3 style="margin-bottom:12px;color:#1a3a5c">Load Case: ${displayCaseName(res.case_name)}</h3>
       ${messagesHtml}
       ${summaryHtml}
       <div class="card" style="margin-bottom:18px">
