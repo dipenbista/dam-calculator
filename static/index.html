@@ -1213,7 +1213,7 @@ function updateLivePreview() {
     sx: offX + (wx-wMinX)*scale,
     sy: offY + (wMaxY-wy)*scale
   });
-  // Clamp sx to drawing area left edge
+  // Clamp sx to drawing area
   const clampLeft  = sx => Math.max(ML, sx);
   const clampRight = sx => Math.min(SVG_W-MR, sx);
 
@@ -1399,6 +1399,21 @@ function updateLivePreview() {
       html += `<text x="${(bx1+bx2)/2}" y="${ay+10}" fill="#1a3a5c" font-size="8.5"
         text-anchor="middle" font-weight="700">B = ${baseWidth.toFixed(2)} m</text>`;
     }
+  }
+
+  // ── UPSTREAM / DOWNSTREAM orientation labels ──────────────────────────────
+  // The live preview keeps x increasing left-to-right.
+  // Label each side so the user can always tell which is upstream.
+  {
+    const {sx:heelSvgX} = toSvg(heelX, heelPt.y);
+    const {sx:toeSvgX}  = toSvg(toeX,  toePt.y);
+    const isHeelLeft = heelSvgX <= toeSvgX;
+    const usX = isHeelLeft ? Math.min(heelSvgX,toeSvgX)+4 : Math.max(heelSvgX,toeSvgX)-4;
+    const dsX = isHeelLeft ? Math.max(heelSvgX,toeSvgX)-4 : Math.min(heelSvgX,toeSvgX)+4;
+    html += `<text x="${usX}" y="${MT+11}" fill="#1a3399" font-size="9" font-weight="700"
+      text-anchor="${isHeelLeft?'start':'end'}">← US</text>`;
+    html += `<text x="${dsX}" y="${MT+11}" fill="#1a3399" font-size="9" font-weight="700"
+      text-anchor="${isHeelLeft?'end':'start'}">DS →</text>`;
   }
 
   // ── Scale bar ─────────────────────────────────────────────────────────────
