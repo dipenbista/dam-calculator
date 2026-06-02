@@ -44,68 +44,27 @@ class DamGeometry:
         coords = [(float(x), float(y)) for x, y in self.coordinates]
         utp    = (float(self.upstream_top_point[0]), float(self.upstream_top_point[1]))
 
-        # ── Heel/toe detection by walking from the upstream top point ──────
-        # A dam cross-section is: UTP → upstream face → heel → base → toe →
-        # downstream face → UTP. Re-indexing the polygon so the UTP is first,
-        # both faces descend from the UTP and the base connects their lowest
-        # corners. The heel and toe are therefore the two "valleys" (vertices
-        # that are local minima in y) of the boundary walk. This is robust to
-        # arbitrarily steep / inclined bases because it never relies on a
-        # height tolerance — it uses the polygon's own shape.
+        # ── Heel/toe detection ───────────────────────────────────────────────
+        # Rule: vertices with x ≤ utp_x belong to the upstream face;
+        #       vertices with x >  utp_x belong to the downstream face.
+        # Heel = lowest y on the upstream face.
+        # Toe  = lowest y on the downstream face.
+        # This is unambiguous because the user always inputs the UTP at the
+        # junction of the crest and the upstream face, so upstream = left of UTP.
         n = len(coords)
         if n < 3:
             raise ValueError("Dam polygon must have at least 3 vertices.")
 
-        utp_idx = int(np.argmin([np.hypot(x - utp[0], y - utp[1])
-                                 for x, y in coords]))
-        order = [(utp_idx + k) % n for k in range(n)]   # UTP first
-        ys    = [coords[i][1] for i in order]
+        us_pts = [(x, y) for x, y in coords if x <= utp[0]]
+        ds_pts = [(x, y) for x, y in coords if x >  utp[0]]
 
-        # Local-minima ("valleys") along the walk, excluding the UTP peak (p=0)
-        valleys = []
-        for p in range(1, n):
-            prev_y = ys[(p - 1) % n]
-            next_y = ys[(p + 1) % n]
-            if ys[p] <= prev_y + 1e-9 and ys[p] <= next_y + 1e-9:
-                valleys.append(p)
-
-        if len(valleys) >= 2:
-            # The two deepest valleys are the base corners (heel & toe)
-            valleys.sort(key=lambda p: ys[p])
-            idx_a = order[valleys[0]]
-            idx_b = order[valleys[1]]
-        else:
-            # Fallback: the two lowest distinct vertices
-            low = sorted(range(n), key=lambda i: coords[i][1])[:2]
-            idx_a, idx_b = low[0], low[1]
-
-        ca, cb = coords[idx_a], coords[idx_b]
-        if (abs(ca[0] - cb[0]) < 1e-9 and abs(ca[1] - cb[1]) < 1e-9):
+        if not us_pts or not ds_pts:
             raise ValueError(
-                "Could not identify two distinct base vertices for heel/toe. "
-                "Check the polygon and that upstream_top_point is at the dam crest.")
+                "Could not split polygon into upstream/downstream faces. "
+                "Check that upstream_top_point x-coordinate separates the polygon.")
 
-        # Heel vs toe: the UTP marks the upstream crest corner, so the UPSTREAM
-        # face is the UTP's steeper neighbouring edge (the other UTP edge runs
-        # along the crest toward the downstream side). Walk from the UTP in the
-        # steeper-drop direction; the base corner reached first is the heel.
-        nb_fwd = coords[(utp_idx + 1) % n]
-        nb_bwd = coords[(utp_idx - 1) % n]
-        us_dir = +1 if (utp[1] - nb_fwd[1]) >= (utp[1] - nb_bwd[1]) else -1
-
-        def first_corner(direction):
-            i = utp_idx
-            for _ in range(n):
-                i = (i + direction) % n
-                if i == idx_a:
-                    return idx_a
-                if i == idx_b:
-                    return idx_b
-            return idx_a
-
-        heel_idx_orig = first_corner(us_dir)
-        heel = coords[heel_idx_orig]
-        toe  = cb if heel_idx_orig == idx_a else ca
+        heel = min(us_pts, key=lambda p: p[1])
+        toe  = min(ds_pts, key=lambda p: p[1])
 
         self.heel_elevation = heel[1]
         self.toe_elevation  = toe[1]

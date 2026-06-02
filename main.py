@@ -806,32 +806,19 @@ def _run_section(req: LoadCaseRequest, sec: SectionInput) -> SectionResponse:
     orig_coords = [(p.x, p.y) for p in req.coordinates]
     utp_orig    = (req.upstream_top_point.x, req.upstream_top_point.y)
 
-    # Identify heel & toe in absolute coords using the same UTP-walk "valley"
-    # method as DamGeometry, so steeply-inclined original bases are handled.
+    # Heel/toe: same rule as DamGeometry.
+    # x ≤ utp_x → upstream face (heel = lowest y there)
+    # x >  utp_x → downstream face (toe = lowest y there)
     n = len(orig_coords)
 
     def nidx(pt):
         return min(range(len(orig_coords)),
                    key=lambda i: (orig_coords[i][0]-pt[0])**2+(orig_coords[i][1]-pt[1])**2)
 
-    utp_idx = nidx(utp_orig)
-    _order  = [(utp_idx + k) % n for k in range(n)]
-    _ys     = [orig_coords[i][1] for i in _order]
-    _valleys = []
-    for _p in range(1, n):
-        if (_ys[_p] <= _ys[(_p-1) % n] + 1e-9 and
-                _ys[_p] <= _ys[(_p+1) % n] + 1e-9):
-            _valleys.append(_p)
-    if len(_valleys) >= 2:
-        _valleys.sort(key=lambda p: _ys[p])
-        _c = [orig_coords[_order[_valleys[0]]], orig_coords[_order[_valleys[1]]]]
-    else:
-        _idxs = sorted(range(n), key=lambda i: orig_coords[i][1])[:2]
-        _c = [orig_coords[_idxs[0]], orig_coords[_idxs[1]]]
-    if abs(_c[0][0]-utp_orig[0]) <= abs(_c[1][0]-utp_orig[0]):
-        heel_pt, toe_pt = _c[0], _c[1]
-    else:
-        heel_pt, toe_pt = _c[1], _c[0]
+    us_pts = [(x, y) for x, y in orig_coords if x <= utp_orig[0]]
+    ds_pts = [(x, y) for x, y in orig_coords if x >  utp_orig[0]]
+    heel_pt = min(us_pts, key=lambda p: p[1])
+    toe_pt  = min(ds_pts, key=lambda p: p[1])
 
     heel_idx, toe_idx = nidx(heel_pt), nidx(toe_pt)
     top_y = max(y for _, y in orig_coords)
