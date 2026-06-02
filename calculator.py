@@ -44,27 +44,68 @@ class DamGeometry:
         coords = [(float(x), float(y)) for x, y in self.coordinates]
         utp    = (float(self.upstream_top_point[0]), float(self.upstream_top_point[1]))
 
-        y_vals = [y for _, y in coords]
-        y_min  = min(y_vals)
-        y_max  = max(y_vals)
-        height_span = y_max - y_min
-        # tol must cover inclined bases where heel and toe are at different elevations.
-        # We use the larger of: fixed minimum, 15% of height, or the full base
-        # y-span (estimated as difference between the two lowest unique y values).
-        y_sorted = sorted(set(round(y, 6) for _, y in coords))
-        base_span = (y_sorted[1] - y_sorted[0]) if len(y_sorted) >= 2 else 0.0
-        tol = max(0.5, height_span * 0.15, base_span + 0.2)
-        base_candidates = [(x, y) for x, y in coords if y <= y_min + tol]
-        if len(base_candidates) < 2:
-            raise ValueError(
-                "Could not identify base vertices for heel/toe. "
-                "Make sure the polygon includes at least two points near "
-                "the base of the dam.")
+        # ── Heel/toe detection by walking from the upstream top point ──────
+        # A dam cross-section is: UTP → upstream face → heel → base → toe →
+        # downstream face → UTP. Re-indexing the polygon so the UTP is first,
+        # both faces descend from the UTP and the base connects their lowest
+        # corners. The heel and toe are therefore the two "valleys" (vertices
+        # that are local minima in y) of the boundary walk. This is robust to
+        # arbitrarily steep / inclined bases because it never relies on a
+        # height tolerance — it uses the polygon's own shape.
+        n = len(coords)
+        if n < 3:
+            raise ValueError("Dam polygon must have at least 3 vertices.")
 
-        # Heel: base candidate closest (in x) to utp
-        heel = min(base_candidates, key=lambda p: abs(p[0] - utp[0]))
-        # Toe:  base candidate farthest (in x) from utp
-        toe  = max(base_candidates, key=lambda p: abs(p[0] - utp[0]))
+        utp_idx = int(np.argmin([np.hypot(x - utp[0], y - utp[1])
+                                 for x, y in coords]))
+        order = [(utp_idx + k) % n for k in range(n)]   # UTP first
+        ys    = [coords[i][1] for i in order]
+
+        # Local-minima ("valleys") along the walk, excluding the UTP peak (p=0)
+        valleys = []
+        for p in range(1, n):
+            prev_y = ys[(p - 1) % n]
+            next_y = ys[(p + 1) % n]
+            if ys[p] <= prev_y + 1e-9 and ys[p] <= next_y + 1e-9:
+                valleys.append(p)
+
+        if len(valleys) >= 2:
+            # The two deepest valleys are the base corners (heel & toe)
+            valleys.sort(key=lambda p: ys[p])
+            idx_a = order[valleys[0]]
+            idx_b = order[valleys[1]]
+        else:
+            # Fallback: the two lowest distinct vertices
+            low = sorted(range(n), key=lambda i: coords[i][1])[:2]
+            idx_a, idx_b = low[0], low[1]
+
+        ca, cb = coords[idx_a], coords[idx_b]
+        if (abs(ca[0] - cb[0]) < 1e-9 and abs(ca[1] - cb[1]) < 1e-9):
+            raise ValueError(
+                "Could not identify two distinct base vertices for heel/toe. "
+                "Check the polygon and that upstream_top_point is at the dam crest.")
+
+        # Heel vs toe: the UTP marks the upstream crest corner, so the UPSTREAM
+        # face is the UTP's steeper neighbouring edge (the other UTP edge runs
+        # along the crest toward the downstream side). Walk from the UTP in the
+        # steeper-drop direction; the base corner reached first is the heel.
+        nb_fwd = coords[(utp_idx + 1) % n]
+        nb_bwd = coords[(utp_idx - 1) % n]
+        us_dir = +1 if (utp[1] - nb_fwd[1]) >= (utp[1] - nb_bwd[1]) else -1
+
+        def first_corner(direction):
+            i = utp_idx
+            for _ in range(n):
+                i = (i + direction) % n
+                if i == idx_a:
+                    return idx_a
+                if i == idx_b:
+                    return idx_b
+            return idx_a
+
+        heel_idx_orig = first_corner(us_dir)
+        heel = coords[heel_idx_orig]
+        toe  = cb if heel_idx_orig == idx_a else ca
 
         self.heel_elevation = heel[1]
         self.toe_elevation  = toe[1]
@@ -483,7 +524,7 @@ def compute_ice(geom, ice, wl_us_abs):
     if not ice.include:
         return None
     h_us = wl_us_abs - geom.heel_elevation
-    if h_us <= 0 or h_us >= geom.dam_top_elevation_rel - geom.upstream_heel[1]:
+    if h_us <= 0 or h_us > geom.dam_top_elevation_rel - geom.upstream_heel[1]:
         return None
     y_ice = geom.upstream_heel[1] + max(h_us - 0.25, 0.0)
     return make_force('Ice Pressure', H=ice.pressure,
@@ -558,12 +599,29 @@ def moments_and_stability(forces, geom, mat):
     cos_a    = dx / base_len if base_len > 1e-9 else 1.0
 
     # Resolve total resultant onto base plane
-    # N = component perpendicular to base (compression +ve)
-    # T = component parallel to base (downstream = destabilising +ve)
+    # Internal coords: x points upstream (+ve toward heel), y points upward.
+    # Force vector in internal coords: F = (-F_H, -F_V)
+    #   (H is downstream = -x; V is downward = -y)
+    # Outward normal to base (points away from rock, toward dam body):
+    #   n_out = (-sin_a, cos_a)  in internal coords
+    # Downstream unit vector along base:
+    #   e_down = (-cos_a, -sin_a) in internal coords
+    #
+    # N = compression (force INTO base) = -F · n_out
+    #   = -[(-F_H)(-sin_a) + (-F_V)(cos_a)]
+    #   = F_V*cos_a - F_H*sin_a
+    #
+    # T = shear downstream (driving) = F · e_down
+    #   = (-F_H)(-cos_a) + (-F_V)(-sin_a)
+    #   = F_H*cos_a + F_V*sin_a
+    #
+    # Note: when alpha=0 (flat base): N=V, T=H ✓
+    # When heel is higher than toe (alpha>0, base slopes down to DS):
+    #   weight component adds to T (both gravity and water drive sliding downstream)
     F_V =  sum_V         # net vertical, downward +ve
     F_H =  H_net_horiz   # net horizontal, downstream +ve
-    N   =  F_V * cos_a + F_H * sin_a
-    T   =  F_H * cos_a - F_V * sin_a
+    N   =  F_V * cos_a - F_H * sin_a
+    T   =  F_H * cos_a + F_V * sin_a
 
     mu = mat.friction_coeff
     if T > 1e-6:
@@ -587,7 +645,9 @@ def moments_and_stability(forces, geom, mat):
 def assemble_forces(geom, mat, wl_us, wl_ds,
                     drainage, silt, backfill, ice,
                     rock_bolt, rock_anchor, applied,
-                    include_rock_bolts, tension_length=0.0):
+                    include_rock_bolts, tension_length=0.0,
+                    rb_depth_limit_apply=True,
+                    rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
     forces = []
     forces.append(compute_dam_weight(geom, mat))
     f = compute_water_weight_upstream(geom, mat, wl_us)
@@ -601,13 +661,12 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
     f = compute_ice(geom, ice, wl_us)
     if f: forces.append(f)
 
-    # Height limit uses HRV head (depth of water above heel), not raw dam height
+    # Depth limit check: uses HRV head (depth of water above heel).
+    # If rb_depth_limit_apply is False the limit is ignored — bolts always included.
     _rb_head = wl_us - geom.heel_elevation
-    if _rb_head > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS and rock_bolt.include:
-        pass  # silently skip — warning returned separately
+    _limit_ok = (not rb_depth_limit_apply) or (_rb_head <= rb_depth_limit)
 
-    if (include_rock_bolts and rock_bolt.include
-            and _rb_head <= MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+    if (include_rock_bolts and rock_bolt.include and _limit_ok):
         f = compute_rock_bolt(geom, rock_bolt)
         if f: forces.append(f)
 
@@ -619,7 +678,9 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
 
 def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                       drainage, silt, rock_bolt, ice,
-                      res, include_rock_bolts, tension_L=0.0):
+                      res, include_rock_bolts, tension_L=0.0,
+                      rb_depth_limit_apply=True,
+                      rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
     """
     Produce a concise list of engineering messages.
     Each message: { "type": "info"|"warning"|"alert", "text": "..." }
@@ -630,16 +691,14 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
     h_us = wl_us - geom.heel_elevation
     fs   = res['FS_sliding']
 
-    # ── 1. Rock bolts disabled by height limit ───────────────────────────────
-    # Height check: measured from HRV level down to heel elevation (water depth)
+    # ── 1. Rock bolts disabled by depth limit ────────────────────────────────
     hrv_head = wl_us - geom.heel_elevation
-    if (rock_bolt.include and include_rock_bolts
-            and hrv_head > MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+    if (rock_bolt.include and include_rock_bolts and rb_depth_limit_apply
+            and hrv_head > rb_depth_limit):
         msgs.append({"type": "warning",
                      "text": (f"Rock bolts NOT included: HRV water depth above heel "
-                              f"({hrv_head:.2f} m) exceeds the "
-                              f"{MAX_DAM_HEIGHT_FOR_ROCK_BOLTS:.1f} m limit for use of rock bolts per NVE's "
-                              f"retningslinjer for betongdammer.")})
+                              f"({hrv_head:.2f} m) exceeds the user-set "
+                              f"{rb_depth_limit:.1f} m depth limit for rock bolt use.")})
 
     # ── 2. Inclined base ─────────────────────────────────────────────────────
     if abs(geom.heel_elevation - geom.toe_elevation) > 0.05:
@@ -677,42 +736,22 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                               f"is below 1.0 — the dam will slide under "
                               f"this load case.")})
 
-    # ── 6. FS_overturning below 1.0 ──────────────────────────────────────────
-    fo = res['FS_overturning']
-    if fo < 1.0:
-        msgs.append({"type": "alert",
-                     "text": (f"CRITICAL: Overturning factor of safety ({fo:.3f}) "
-                              f"is below 1.0 — the dam is overturning under "
-                              f"this load case.")})
-
-    # ── 7. Net vertical force ≤ 0 (no base contact) ───────────────────────────
-    if res['sum_V'] <= 0:
-        msgs.append({"type": "alert",
-                     "text": (f"Net vertical force is zero or upward "
-                              f"({res['sum_V']:.2f} kN/m). The dam has no "
-                              f"base contact — check uplift and applied forces.")})
-
-    # ── 8. Drainage distance exceeds base width ───────────────────────────────
-    if drainage.include and drainage.distance_from_heel >= L:
-        msgs.append({"type": "warning",
-                     "text": (f"Drainage distance from heel "
-                              f"({drainage.distance_from_heel:.2f} m) ≥ base "
-                              f"width ({L:.2f} m). Drain falls outside the base "
-                              f"— drainage ignored in uplift calculation.")})
-
     return msgs
 
 
 def run_load_case(case_name, geom, mat, wl_us, wl_ds,
                   drainage, silt, backfill, ice,
                   rock_bolt, rock_anchor, applied,
-                  include_rock_bolts=True):
+                  include_rock_bolts=True,
+                  rb_depth_limit_apply=True,
+                  rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
     L = geom.base_length_horizontal
     tension_L = 0.0
     for _ in range(30):
         forces = assemble_forces(geom, mat, wl_us, wl_ds, drainage, silt,
                                  backfill, ice, rock_bolt, rock_anchor,
-                                 applied, include_rock_bolts, tension_L)
+                                 applied, include_rock_bolts, tension_L,
+                                 rb_depth_limit_apply, rb_depth_limit)
         res = moments_and_stability(forces, geom, mat)
         if not res['heel_tension']:
             break
@@ -721,7 +760,8 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
             tension_L = L
             forces = assemble_forces(geom, mat, wl_us, wl_ds, drainage, silt,
                                      backfill, ice, rock_bolt, rock_anchor,
-                                     applied, include_rock_bolts, tension_L)
+                                     applied, include_rock_bolts, tension_L,
+                                     rb_depth_limit_apply, rb_depth_limit)
             res = moments_and_stability(forces, geom, mat)
             break
         new_tL = L - st/(st-sh)*L
@@ -740,7 +780,8 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
     messages = generate_messages(
         case_name, geom, mat, wl_us, wl_ds,
         drainage, silt, rock_bolt, ice, res,
-        include_rock_bolts, tension_L)
+        include_rock_bolts, tension_L,
+        rb_depth_limit_apply, rb_depth_limit)
 
     res.update(case_name=case_name, tension_length=tension_L,
                wl_us=wl_us, wl_ds=wl_ds, forces=forces,
@@ -781,42 +822,19 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     pad_us = p_us_max_w + 1.0
     pad_ds = p_ds_max_w + 1.0
 
-    # ── Figure sizing: fixed total height = 16 cm, equal-aspect main panel ──
-    # stress subplot has fixed physical height; main panel fills the rest.
-    # Scale (px/m) is computed from the figure width and x-span so that
-    # both axes map the same number of metres to the same number of inches.
-
-    CM_TO_IN     = 1.0 / 2.54
-    FIG_H_IN     = 16.0 * CM_TO_IN        # fixed total height = 16 cm
-    stress_h_in  = 1.4 * CM_TO_IN * 2.54  # 1.4 cm for stress subplot (≈0.55 in)
-    gap_in       = 0.45                    # gap between panels
-
+    fig_w_in    = 160.0 / 25.4
     x_lo = -pad_ds - 0.3
     x_hi =  heel_x + pad_us + 0.3
     x_span = x_hi - x_lo
     y_lo = y_base_ref - uplift_depth - 0.5
     y_hi = dam_top * 1.45
     y_span = y_hi - y_lo
+    # Equal aspect: dam panel height set so 1 m in x == 1 m in y at fig width
+    main_h_in = (y_span / x_span) * fig_w_in
 
-    # Main panel height in inches (remaining after stress + gap)
-    main_h_in = FIG_H_IN - stress_h_in - gap_in
-    if main_h_in < 1.0:
-        main_h_in = 1.0
-
-    # Width that gives equal aspect: 1 dam-metre = same physical length in x and y
-    # scale = main_h_in / y_span  (inches per metre, y direction)
-    # fig_w_in = x_span * scale
-    scale_in = main_h_in / y_span          # inches per dam-metre
-    fig_w_in = x_span * scale_in           # figure width for equal aspect
-
-    # Clamp width to reasonable range for screen/print
-    fig_w_in = max(5.0, min(fig_w_in, 20.0))
-
-    fig = plt.figure(figsize=(fig_w_in, FIG_H_IN))
-    gs2 = fig.add_gridspec(2, 1, height_ratios=[main_h_in, stress_h_in],
-                           hspace=gap_in / FIG_H_IN)
-    ax  = fig.add_subplot(gs2[0])
-    ax2 = fig.add_subplot(gs2[1])
+    # ── FIGURE 1: dam cross-section only ──────────────────────────────
+    fig = plt.figure(figsize=(fig_w_in, main_h_in))
+    ax  = fig.add_subplot(1, 1, 1)
 
     # Dam body
     xs = [p[0] for p in geom.coordinates] + [geom.coordinates[0][0]]
@@ -1021,17 +1039,42 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     elev_offset = geom.toe_elevation
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v,_: f'{v+elev_offset:.0f}'))
     ax.set_ylabel('Elevation (m)', fontsize=10)
-    ax.tick_params(labelbottom=False)
+    # Show x-axis tick labels and label (same axis basis as the stress diagram:
+    # horizontal distance measured from the downstream toe).
+    ax.tick_params(labelbottom=True)
+    ax.set_xlabel('← UPSTREAM          Distance from downstream toe (m)          DOWNSTREAM →',
+                  fontsize=9)
     ax.grid(True, alpha=0.18)
-    ax.text(heel_x+pad_us*0.5, y_hi*0.97, 'UPSTREAM',   fontsize=10, color='#1a3399', ha='center', fontweight='bold', va='top')
-    ax.text(-pad_ds*0.5,       y_hi*0.97, 'DOWNSTREAM', fontsize=10, color='#1a3399', ha='center', fontweight='bold', va='top')
-    check_name = res.get('resultant_check_type','Middle third')
-    mt_str = f"✓ Within {check_name}" if res['in_middle_third'] else f"✗ Outside {check_name}"
-    ax.set_title(f"Load Case: {res['case_name']}\n"
-                 ,
-                 fontsize=10, fontweight='bold', pad=6)
+    # Place labels in axes-fraction coords (just inside left/right edges) so
+    # the words never clip regardless of data range. After invert_xaxis,
+    # x-fraction 0.0 is the LEFT edge (upstream) and 1.0 is the RIGHT (downstream).
+    ax.text(0.02, 0.97, 'UPSTREAM',   transform=ax.transAxes, fontsize=10,
+            color='#1a3399', ha='left',  va='top', fontweight='bold')
+    ax.text(0.98, 0.97, 'DOWNSTREAM', transform=ax.transAxes, fontsize=10,
+            color='#1a3399', ha='right', va='top', fontweight='bold')
+    ax.set_title(f"Load Case: {res['case_name']}",
+                 fontsize=11, fontweight='bold', pad=6)
 
-    # Stress subplot
+    # Save dam figure
+    # Fixed axes rectangle so the data area has identical pixel width in
+    # both the dam and stress figures (→ identical x-scale).
+    # NOTE: do NOT call set_xlim(x_lo, x_hi) here — the axis was already
+    # inverted above via invert_xaxis(); re-setting xlim with lo<hi would
+    # cancel the inversion and put upstream on the wrong side.
+    LEFT, RIGHT = 0.12, 0.97
+    fig.subplots_adjust(left=LEFT, right=RIGHT, top=0.92, bottom=0.10)
+    buf1 = io.BytesIO()
+    fig.savefig(buf1, format='png', dpi=130)   # NO bbox_inches='tight'
+    plt.close(fig)
+    buf1.seek(0)
+    dam_b64 = base64.b64encode(buf1.read()).decode('utf-8')
+
+    # ── FIGURE 2: base stress distribution (same x-scale) ─────────────
+    # Width matches dam figure exactly so x metres map identically.
+    stress_h_in = 2.4
+    fig2 = plt.figure(figsize=(fig_w_in, stress_h_in))
+    ax2  = fig2.add_subplot(1, 1, 1)
+
     s_toe = res['sigma_toe']; s_heel = res['sigma_heel']
     def zero_cross(x0,y0,x1,y1):
         if (y0>=0)==(y1>=0): return None
@@ -1066,10 +1109,13 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     ax2.set_xlabel('← UPSTREAM          Distance from downstream toe (m)          DOWNSTREAM →', fontsize=9)
     ax2.set_title('Base Stress Distribution  (green=compression, red=tension)', fontsize=9)
     ax2.grid(True, alpha=0.20)
-    fig.subplots_adjust(left=0.08, right=0.97, top=0.93, bottom=0.08)
+    # Same LEFT/RIGHT fractions and same fig width → identical x pixel scale
+    fig2.subplots_adjust(left=LEFT, right=RIGHT, top=0.80, bottom=0.30)
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=130, bbox_inches='tight')
-    plt.close(fig)
-    buf.seek(0)
-    return base64.b64encode(buf.read()).decode('utf-8')
+    buf2 = io.BytesIO()
+    fig2.savefig(buf2, format='png', dpi=130)   # NO bbox_inches='tight'
+    plt.close(fig2)
+    buf2.seek(0)
+    stress_b64 = base64.b64encode(buf2.read()).decode('utf-8')
+
+    return {'dam': dam_b64, 'stress': stress_b64}
