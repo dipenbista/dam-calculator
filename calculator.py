@@ -5,7 +5,7 @@ All calculation logic. No __main__ block.
 Called by main.py (FastAPI).
 """
 
-import io, base64
+import io, base64, math
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")          # non-interactive backend — required for servers
@@ -20,7 +20,7 @@ from typing import List, Tuple, Optional
 
 MAX_DAM_HEIGHT_FOR_ROCK_BOLTS = 7.0
 
-LOAD_CASES_USE_L6 = {"MFV", "DFV (no rock bolts)"}
+LOAD_CASES_USE_L6 = {"MFV", "DFV (no rock bolts)", "HRV+EQ (X-dom)", "HRV+EQ (Y-dom)"}
 
 # =============================================================================
 # DATA CLASSES
@@ -188,6 +188,13 @@ class RockAnchorConfig:
 class AppliedForceConfig:
     vertical_forces:   List[Tuple[float, float]] = field(default_factory=list)
     horizontal_forces: List[Tuple[float, float]] = field(default_factory=list)
+
+
+@dataclass
+class EarthquakeConfig:
+    include: bool  = False
+    a_h:     float = 0.0   # horizontal design acceleration (m/s²)
+    a_v:     float = 0.0   # vertical design acceleration (m/s²)
 
 
 # =============================================================================
@@ -601,12 +608,72 @@ def moments_and_stability(forces, geom, mat):
                 foundation_angle_deg=float(np.degrees(np.arctan2(dy, dx))),
                 N_foundation=float(N), T_foundation=float(T))
 
+def compute_earthquake_forces(geom, mat, wl_us, eq):
+    """
+    Compute earthquake inertia and hydrodynamic forces.
+
+    Inertia horizontal: F_ih = (a_h/g) * W   at dam centroid
+    Inertia vertical:   F_iv = (a_v/g) * W   at dam centroid (upward = destabilising)
+    Hydrodynamic (Westergaard with cos²θ correction and integrated moment arm):
+        p(d) = (7/8) * (a_h/g) * γ_w * √(H*d) * cos²θ   [kPa at depth d below WL]
+        F_hd = ∫₀ᴴ p(d) dd  = (7/12) * (a_h/g) * γ_w * H² * cos²θ
+        Moment arm from base: ȳ = ∫ p(d)*(H-d) dd / F_hd  = 0.4*H (exact for parabola)
+    Returns list of force dicts (may be empty if EQ not included or no water).
+    """
+    if not eq.include:
+        return []
+    g = 9.81
+    forces = []
+
+    # Dam weight (reuse existing area/centroid)
+    area, cx, cy = polygon_area_centroid(geom.coordinates)
+    W = mat.unit_weight_dam * area   # kN/m
+
+    # Inertia horizontal (toward downstream = destabilising)
+    F_ih = (eq.a_h / g) * W
+    if F_ih > 1e-6:
+        forces.append(make_force('Inertia (horiz, EQ)',
+                                 H=F_ih, x=cx, y=cy, stabilising=False))
+
+    # Inertia vertical (upward = destabilising → negative V)
+    F_iv = (eq.a_v / g) * W
+    if F_iv > 1e-6:
+        forces.append(make_force('Inertia (vert, EQ)',
+                                 V=-F_iv, x=cx, y=cy, stabilising=False))
+
+    # Hydrodynamic (Westergaard) — only if upstream water present
+    H = wl_us - geom.heel_elevation
+    if H > 1e-6:
+        # Upstream face angle from vertical
+        us_face = geom.us_face
+        if len(us_face) >= 2:
+            dx = us_face[-1][0] - us_face[0][0]
+            dy = us_face[-1][1] - us_face[0][1]
+            theta = math.atan2(abs(dx), abs(dy)) if abs(dy) > 1e-9 else math.pi/2
+        else:
+            theta = 0.0
+        cos2_theta = math.cos(theta)**2
+
+        gw = mat.unit_weight_water
+        F_hd = (7/12) * (eq.a_h / g) * gw * H**2 * cos2_theta
+        # Integrated moment arm for parabolic distribution = 0.4H above base
+        y_arm = geom.heel_elevation + 0.4 * H
+        if F_hd > 1e-6:
+            forces.append(make_force('Hydrodynamic (Westergaard, EQ)',
+                                     H=F_hd,
+                                     x=geom.base_length_horizontal,
+                                     y=y_arm - geom.toe_elevation,
+                                     stabilising=False))
+    return forces
+
+
 def assemble_forces(geom, mat, wl_us, wl_ds,
                     drainage, silt, backfill, ice,
                     rock_bolt, rock_anchor, applied,
                     include_rock_bolts, tension_length=0.0,
                     rb_depth_limit_apply=True,
-                    rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+                    rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS,
+                    earthquake=None):
     forces = []
     forces.append(compute_dam_weight(geom, mat))
     f = compute_water_weight_upstream(geom, mat, wl_us)
@@ -619,6 +686,9 @@ def assemble_forces(geom, mat, wl_us, wl_ds,
     forces.extend(compute_backfill(geom, mat, backfill, wl_ds))
     f = compute_ice(geom, ice, wl_us)
     if f: forces.append(f)
+    # Earthquake forces (ice excluded per Eurocode 8)
+    if earthquake and earthquake.include:
+        forces.extend(compute_earthquake_forces(geom, mat, wl_us, earthquake))
 
     # Depth limit check: uses HRV head (depth of water above heel).
     # If rb_depth_limit_apply is False the limit is ignored — bolts always included.
@@ -688,7 +758,28 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                               f"Only submerged silt is calculated — "
                               f"dry silt above the water level is ignored.")})
 
-    # ── 5. FS_sliding below 1.0 ─────────────────────────────────────────────
+    # ── 5. FS_sliding infinite — explain why ────────────────────────────────
+    if math.isinf(fs):
+        T = res.get('T_foundation', 0.0)
+        alpha_deg = res.get('foundation_angle_deg', 0.0)
+        if T <= 1e-6 and alpha_deg < -0.5:
+            reason = (f"The base slopes upward toward the downstream toe "
+                      f"(toe is {abs(geom.toe_elevation - geom.heel_elevation):.2f} m "
+                      f"higher than the heel). The dam's weight component along the "
+                      f"inclined base acts upstream, fully counteracting the downstream "
+                      f"driving forces. Net shear on the base plane = {T:.3f} kN/m ≤ 0 "
+                      f"— no sliding tendency in the downstream direction.")
+        elif T <= 1e-6 and res.get('H_net', 0.0) <= 0:
+            reason = (f"Net horizontal force is zero or acts upstream "
+                      f"(H_net = {res.get('H_net',0):.3f} kN/m). "
+                      f"No downstream sliding tendency.")
+        else:
+            reason = (f"Net shear on the base plane = {T:.3f} kN/m ≤ 0 "
+                      f"— no downstream sliding tendency under this load combination.")
+        msgs.append({"type": "info",
+                     "text": f"FS Sliding = ∞: {reason}"})
+
+    # ── 6. FS_sliding below 1.0 ─────────────────────────────────────────────
     if fs < 1.0:
         msgs.append({"type": "alert",
                      "text": (f"CRITICAL: Sliding factor of safety ({fs:.3f}) "
@@ -703,14 +794,22 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
                   rock_bolt, rock_anchor, applied,
                   include_rock_bolts=True,
                   rb_depth_limit_apply=True,
-                  rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS):
+                  rb_depth_limit=MAX_DAM_HEIGHT_FOR_ROCK_BOLTS,
+                  earthquake=None,
+                  fs_uls=1.5, fs_als=1.1,
+                  res_uls='middle_third', res_als='l6'):
+    """
+    fs_uls / fs_als : user-defined FS sliding thresholds
+    res_uls / fs_als: 'middle_third' (L/3–2L/3) or 'l6' (L/6–5L/6)
+    """
     L = geom.base_length_horizontal
     tension_L = 0.0
     for _ in range(30):
         forces = assemble_forces(geom, mat, wl_us, wl_ds, drainage, silt,
                                  backfill, ice, rock_bolt, rock_anchor,
                                  applied, include_rock_bolts, tension_L,
-                                 rb_depth_limit_apply, rb_depth_limit)
+                                 rb_depth_limit_apply, rb_depth_limit,
+                                 earthquake)
         res = moments_and_stability(forces, geom, mat)
         if not res['heel_tension']:
             break
@@ -720,7 +819,8 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
             forces = assemble_forces(geom, mat, wl_us, wl_ds, drainage, silt,
                                      backfill, ice, rock_bolt, rock_anchor,
                                      applied, include_rock_bolts, tension_L,
-                                     rb_depth_limit_apply, rb_depth_limit)
+                                     rb_depth_limit_apply, rb_depth_limit,
+                                     earthquake)
             res = moments_and_stability(forces, geom, mat)
             break
         new_tL = L - st/(st-sh)*L
@@ -729,7 +829,10 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
         tension_L = new_tL
 
     xr = res['x_resultant']
-    if case_name in LOAD_CASES_USE_L6:
+    # Determine which resultant criterion applies for this case
+    use_l6 = (case_name in LOAD_CASES_USE_L6)
+    criterion = res_als if use_l6 else res_uls
+    if criterion == 'l6':
         res['in_middle_third']      = (L/6 <= xr <= 5*L/6)
         res['resultant_check_type'] = "L/6–5L/6"
     else:
@@ -744,7 +847,8 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
 
     res.update(case_name=case_name, tension_length=tension_L,
                wl_us=wl_us, wl_ds=wl_ds, forces=forces,
-               messages=messages)
+               messages=messages,
+               fs_threshold=(fs_uls if not use_l6 else fs_als))
     return res
 
 
@@ -752,10 +856,17 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
 # PLOT → base64 PNG  (no files written to disk)
 # =============================================================================
 
-def plot_to_base64(res, geom, mat, drainage, silt,
-                   p_scale=1.0, f_scale=1.0, resultant_scale=30.0):
-    """Render the dam figure and return a base64-encoded PNG string."""
+def plot_to_base64(res, geom, mat, drainage, silt):
+    """Render the dam figure and return a base64-encoded PNG string.
+
+    Fixed display scales:
+      Pressures  : 1/10   — 1 kPa  = 0.1 m  (e.g. 60 kPa → 6 m polygon width)
+      Forces     : 1/100  — 1 kN/m = 0.01 m (e.g. 2400 kN/m → 24 m arrow)
+    """
     kN2t = 1.0 / 10.0
+    p_scale         = 1.0   # pressure:  p2w(p)  = p / 10
+    f_scale         = 1.0   # force:     f2l(F)  = F / 10
+    resultant_scale = 10.0  # resultant: r2l(F)  = F / 100 (thinner, shorter)
 
     def p2w(p): return (p * kN2t) / p_scale
     def f2l(F): return (F * kN2t) / f_scale
@@ -879,9 +990,7 @@ def plot_to_base64(res, geom, mat, drainage, silt,
                 ax.annotate('', xy=(face_x, yv), xytext=(face_x+wv, yv),
                             arrowprops=dict(arrowstyle='->', color=color, lw=0.9, mutation_scale=8), zorder=4)
         F, y_bar = _trap_pressure_resultant(gw, h_act, h_ot)
-        avg_w = sign * p2w((p_base+p_top)/2.0) * 1.4
-        ax.annotate('', xy=(face_x, base_y+y_bar), xytext=(face_x+avg_w, base_y+y_bar),
-                    arrowprops=dict(arrowstyle='->', color=color, lw=3.0, mutation_scale=17), zorder=6)
+        # No resultant arrow for water/downstream pressure — pressure diagram only
 
     if h_us_act > 0:
         draw_pressure_diagram(h_us_act, max(h_us_full-(dam_top-heel_y),0.0),
@@ -927,44 +1036,179 @@ def plot_to_base64(res, geom, mat, drainage, silt,
         if pw > 1e-4:
             ax.annotate('', xy=(xv, ref_y), xytext=(xv, ref_y-pw),
                         arrowprops=dict(arrowstyle='->', color='darkorange', lw=0.9, mutation_scale=8), zorder=4)
-    for f in res['forces']:
-        if 'Uplift' in f['name']:
-            avg_pw = p2w(gw*(h_us_u+h_ds_u)/2.0)*1.4
-            ax.annotate('', xy=(f['x_from_toe'], ref_y), xytext=(f['x_from_toe'], ref_y-avg_pw),
-                        arrowprops=dict(arrowstyle='->', color='darkorange', lw=3.0, mutation_scale=17), zorder=6)
-            break
+    # No resultant arrow for uplift — pressure diagram only
 
-    # Other forces
-    skip = {'Water Pressure US (tri)','Water Pressure US (trap)',
-            'Water Pressure DS (tri)','Water Pressure DS (trap)',
-            'Dam Weight','Uplift','Silt Pressure (horiz)','Silt Weight'}
+    # ── Westergaard hydrodynamic pressure (EQ load cases) ───────────────────
+    # Drawn as parabolic strip to the LEFT of the water pressure outer edge.
+    # The right boundary of the strip is a vertical line at the outermost x of
+    # the upstream water pressure triangle (x_anchor). The left boundary is
+    # the parabolic Westergaard curve.
+    eq_forces = [f for f in res['forces'] if 'Westergaard' in f['name']]
+    if eq_forces and h_us_act > 0:
+        g_val   = 9.81
+        eq_cfg  = res.get('earthquake')
+        if eq_cfg is not None:
+            ah_g = eq_cfg.a_h / g_val
+            # Upstream face angle from vertical → cos²θ correction
+            us_face_sorted = sorted(geom.us_face, key=lambda p: p[1])
+            if len(us_face_sorted) >= 2:
+                dx_f = us_face_sorted[-1][0] - us_face_sorted[0][0]
+                dy_f = us_face_sorted[-1][1] - us_face_sorted[0][1]
+                theta_f = math.atan2(abs(dx_f), abs(dy_f)) if abs(dy_f) > 1e-9 else math.pi/2
+            else:
+                theta_f = 0.0
+            cos2_f = math.cos(theta_f)**2
+
+            H_wg = res['wl_us'] - geom.heel_elevation
+            n_pts = 80
+            depths   = np.linspace(0, H_wg, n_pts)
+            # Use RELATIVE y (0 = toe) to match the face/polygon coordinate system
+            wl_rel   = res['wl_us'] - geom.toe_elevation
+            y_rel_wg = wl_rel - depths   # relative y at each depth
+
+            # x on upstream face at each elevation (face coords are relative)
+            face_xs_wg = np.array([x_on_face_at_y(geom.us_face, y) for y in y_rel_wg])
+
+            # Water pressure outer edge at each depth
+            # In internal coords, upstream = increasing x, so the outer edge
+            # of the water pressure polygon is at face_x + w_water (upstream side)
+            p_water_wg    = gw * depths
+            w_water_wg    = np.array([p2w(p) for p in p_water_wg])
+            outer_water_x = face_xs_wg + w_water_wg   # extends upstream (+x in internal)
+
+            # Anchor x = outermost (most upstream) x of water pressure = value at base
+            x_anchor = float(outer_water_x[-1])
+
+            # Westergaard pressure at each depth — extends further upstream from anchor
+            p_wg       = (7/8) * ah_g * gw * np.sqrt(np.maximum(H_wg * depths, 0)) * cos2_f
+            w_wg       = np.array([p2w(p) for p in p_wg])
+            wg_outer_x = x_anchor + w_wg   # further upstream (+x) from anchor
+
+            # Build Westergaard polygon:
+            # right boundary = vertical line at x_anchor (tip of water pressure polygon)
+            # left boundary  = parabolic curve wg_outer_x
+            # (after ax.invert_xaxis, x_anchor is to the RIGHT of wg_outer_x visually)
+            right_edge  = np.column_stack([np.full(n_pts, x_anchor), y_rel_wg])
+            left_edge   = np.column_stack([wg_outer_x, y_rel_wg])
+            wg_poly_pts = np.vstack([right_edge, left_edge[::-1]])
+
+            EQ_COL = '#6c3483'
+            ax.fill(wg_poly_pts[:,0], wg_poly_pts[:,1],
+                    color=EQ_COL, alpha=0.35, hatch='///', zorder=5,
+                    label='Westergaard (EQ)')
+            ax.plot(wg_outer_x, y_rel_wg, color=EQ_COL, lw=1.4, zorder=6)
+            ax.plot([x_anchor, x_anchor], [y_rel_wg[0], y_rel_wg[-1]],
+                    color=EQ_COL, lw=0.7, ls=':', zorder=5)
+
+            # Resultant arrow at 0.4H: points from outer parabola edge toward x_anchor (downstream)
+            y_arm_wg_rel = geom.upstream_heel[1] + 0.4 * H_wg
+            d_arm_wg     = res['wl_us'] - (y_arm_wg_rel + geom.toe_elevation)
+            w_wg_arm     = p2w((7/8)*ah_g*gw*math.sqrt(max(H_wg*d_arm_wg,0))*cos2_f)
+            x_wg_outer_arm = x_anchor + w_wg_arm   # outer edge of Westergaard at arm elevation
+            F_hd_val = eq_forces[0]['H']
+            arr_len  = f2l(F_hd_val)   # force scale 1/100
+            # Arrow from outer edge (upstream) toward x_anchor (downstream direction)
+            ax.annotate('', xy=(x_anchor, y_arm_wg_rel),
+                        xytext=(x_wg_outer_arm + arr_len, y_arm_wg_rel),
+                        arrowprops=dict(arrowstyle='->', color=EQ_COL, lw=2.5,
+                                        mutation_scale=15), zorder=8)
+            ax.text(x_wg_outer_arm + arr_len + 0.05, y_arm_wg_rel + dam_top*0.02,
+                    f'F_hd={F_hd_val:.0f} kN/m', fontsize=7.5,
+                    color=EQ_COL, ha='left', zorder=8)
+
+    # ── Inertia arrows (EQ) ──────────────────────────────────────────────────
+    ih_forces = [f for f in res['forces'] if 'Inertia (horiz' in f['name']]
+    iv_forces = [f for f in res['forces'] if 'Inertia (vert'  in f['name']]
+    EQ_COL2 = '#1a5276'   # dark blue for inertia (distinct from Westergaard purple)
+    # Maximum allowed arrow lengths so they stay within the axes bounds.
+    # Horizontal: arrow goes toward toe (decreasing x); cap at centroid x minus a small margin.
+    # Vertical:   arrow goes upward; cap at remaining dam height above centroid.
+    for f in ih_forces:
+        cx_f, cy_f = f['x_from_toe'], f['y_from_toe']
+        ln = min(f2l(f['H']), cx_f - 0.3)   # clamp so head stays inside axes (x > 0)
+        ln = max(ln, 0.3)                     # always show at least a small arrow
+        ax.annotate('', xy=(cx_f - ln, cy_f), xytext=(cx_f, cy_f),
+                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5,
+                                    mutation_scale=15), zorder=7)
+    for f in iv_forces:
+        cx_f, cy_f = f['x_from_toe'], f['y_from_toe']
+        ln = min(f2l(abs(f['V'])), dam_top - cy_f - 0.2)   # clamp to fit above centroid
+        ln = max(ln, 0.3)
+        ax.annotate('', xy=(cx_f, cy_f + ln), xytext=(cx_f, cy_f),
+                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5,
+                                    mutation_scale=15), zorder=7)
+
+    # ── Force resultant arrows ────────────────────────────────────────────────
+    # NO arrow: Dam Weight, Water Pressure US/DS (handled by pressure diagram),
+    #           Uplift (handled by pressure diagram), EQ inertia/hydro (drawn above)
+    # YES arrow (f2l = 1/10 scale): all other forces
+    NO_ARROW = {
+        'Dam Weight',
+        'Water Pressure US (tri)', 'Water Pressure US (trap)',
+        'Water Pressure DS (tri)', 'Water Pressure DS (trap)',
+        'Uplift',
+        'Inertia (horiz, EQ)', 'Inertia (vert, EQ)',
+        'Hydrodynamic (Westergaard, EQ)',
+    }
+    # Colour map for specific force types
+    FORCE_COLORS = {
+        'Ice Pressure':          '#1a6bcc',
+        'Water Weight (US)':     '#2471a3',
+        'Water Weight (DS)':     '#2471a3',
+        'Silt Pressure (horiz)': 'saddlebrown',
+        'Silt Weight':           'saddlebrown',
+        'Rock Bolt':             '#b5451b',
+        'Rock Anchor':           '#b5451b',
+    }
+
+    # Short display labels for force arrows
+    def short_label(name):
+        m = {'Water Weight (US)': 'W_w',
+             'Water Weight (DS)': 'W_w(DS)',
+             'Ice Pressure':      'Ice',
+             'Silt Pressure (horiz)': 'Silt',
+             'Silt Weight':       'W_silt',
+             'Backfill Pressure (dry)': 'BF',
+             'Backfill Pressure (sub)': 'BF(sub)',
+             'Backfill Weight':   'W_BF',
+             'Rock Bolt':         'RB',
+             'Rock Anchor':       'RA',
+        }
+        if name in m: return m[name]
+        if name.startswith('Applied V'): return f'P_v{name[-1]}'
+        if name.startswith('Applied H'): return f'P_h{name[-1]}'
+        return name.split('(')[0].strip()[:6]
+
     for f in res['forces']:
-        if any(s in f['name'] for s in skip): continue
-        color = 'green' if f['stabilising'] else 'red'
+        if f['name'] in NO_ARROW: continue
+        # Backfill, Applied, Water Weight, Ice, Rock Bolt/Anchor, Silt
+        color = FORCE_COLORS.get(f['name'],
+                'green' if f['stabilising'] else 'red')
         x, y  = f['x_from_toe'], f['y_from_toe']
-        ap    = dict(arrowstyle='->', color=color, lw=2.2, mutation_scale=15)
+        lbl   = short_label(f['name'])
+        ap    = dict(arrowstyle='->', color=color, lw=2.5, mutation_scale=16)
+        txt   = dict(fontsize=7, color=color, zorder=7,
+                     bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7))
         if abs(f['V']) > 1e-6:
             ln = f2l(abs(f['V']))
-            if f['V'] > 0: ax.annotate('', xy=(x,y),    xytext=(x,y+ln), arrowprops=ap, zorder=6)
-            else:          ax.annotate('', xy=(x,y+ln),  xytext=(x,y),   arrowprops=ap, zorder=6)
-        if abs(f['H']) > 1e-6:
-            ln = f2l(f['H'])
-            if 'Ice' in f['name']:
-                ax.annotate('', xy=(heel_x,y), xytext=(heel_x+ln,y), arrowprops=ap, zorder=6)
-            elif not f['stabilising']:
-                ax.annotate('', xy=(x-ln,y), xytext=(x,y), arrowprops=ap, zorder=6)
+            if f['V'] > 0:
+                ax.annotate('', xy=(x, y), xytext=(x, y+ln), arrowprops=ap, zorder=6)
+                ax.text(x+0.15, y+ln*0.5, lbl, va='center', **txt)
             else:
-                ax.annotate('', xy=(x+ln,y), xytext=(x,y), arrowprops=ap, zorder=6)
-
-    for f in res['forces']:
-        if f['name'] == 'Silt Pressure (horiz)':
-            ax.annotate('', xy=(f['x_from_toe'],f['y_from_toe']),
-                        xytext=(f['x_from_toe']+f2l(f['H']),f['y_from_toe']),
-                        arrowprops=dict(arrowstyle='->', color='saddlebrown', lw=3.0, mutation_scale=18), zorder=7)
-        if f['name'] == 'Silt Weight':
-            ax.annotate('', xy=(f['x_from_toe'],f['y_from_toe']),
-                        xytext=(f['x_from_toe'],f['y_from_toe']+f2l(f['V'])),
-                        arrowprops=dict(arrowstyle='->', color='saddlebrown', lw=3.0, mutation_scale=18), zorder=7)
+                ax.annotate('', xy=(x, y+ln), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x+0.15, y+ln*0.5, lbl, va='center', **txt)
+        if abs(f['H']) > 1e-6:
+            ln = f2l(abs(f['H']))
+            if 'Ice' in f['name']:
+                ax.annotate('', xy=(heel_x, y), xytext=(heel_x+ln, y),
+                            arrowprops=ap, zorder=6)
+                ax.text(heel_x+ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
+            elif not f['stabilising']:
+                ax.annotate('', xy=(x-ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x-ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
+            else:
+                ax.annotate('', xy=(x+ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x+ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
 
     # Resultant arrow
     xr  = res['x_resultant']
@@ -973,7 +1217,7 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     if abs(SV) > 1e-6 or abs(HN) > 1e-6:
         dx_r = -r2l(HN); dy_r = -r2l(abs(SV))
         ax.annotate('', xy=(xr, by_r), xytext=(xr-dx_r, by_r-dy_r),
-                    arrowprops=dict(arrowstyle='->', color='purple', lw=5, mutation_scale=20), zorder=8)
+                    arrowprops=dict(arrowstyle='->', color='purple', lw=2.5, mutation_scale=14), zorder=8)
 
     # Middle-third / L6 ticks
     if res.get('resultant_check_type') == "L/6–5L/6":
@@ -1011,7 +1255,7 @@ def plot_to_base64(res, geom, mat, drainage, silt,
             color='#1a3399', ha='left',  va='top', fontweight='bold')
     ax.text(0.98, 0.97, 'DOWNSTREAM', transform=ax.transAxes, fontsize=10,
             color='#1a3399', ha='right', va='top', fontweight='bold')
-    ax.set_title(f"Load Case: {res['case_name']}",
+    ax.set_title(f"Load Case: {'HRV+IS' if res['case_name']=='HRV' else res['case_name']}",
                  fontsize=11, fontweight='bold', pad=6)
 
     # Save dam figure
@@ -1028,53 +1272,4 @@ def plot_to_base64(res, geom, mat, drainage, silt,
     buf1.seek(0)
     dam_b64 = base64.b64encode(buf1.read()).decode('utf-8')
 
-    # ── FIGURE 2: base stress distribution (same x-scale) ─────────────
-    # Width matches dam figure exactly so x metres map identically.
-    stress_h_in = 2.4
-    fig2 = plt.figure(figsize=(fig_w_in, stress_h_in))
-    ax2  = fig2.add_subplot(1, 1, 1)
-
-    s_toe = res['sigma_toe']; s_heel = res['sigma_heel']
-    def zero_cross(x0,y0,x1,y1):
-        if (y0>=0)==(y1>=0): return None
-        return x0 - y0*(x1-x0)/(y1-y0)
-    xz = zero_cross(0.0, s_toe, L, s_heel)
-    def fill2(xa,xb,ya,yb,c): ax2.fill_between([xa,xb],[ya,yb],0,color=c,alpha=0.30,zorder=2)
-    if xz is None:
-        fill2(0, L, s_toe, s_heel, 'green' if s_toe>=0 else 'red')
-    else:
-        fill2(0, xz, s_toe, 0,     'green' if s_toe>=0  else 'red')
-        fill2(xz, L, 0, s_heel,    'green' if s_heel>=0 else 'red')
-        ax2.axvline(xz, color='black', lw=1.0, ls=':', zorder=4)
-        ax2.text(xz, 0, f' σ=0 x={xz:.2f}m', fontsize=7, va='bottom')
-    ax2.plot([0,L], [s_toe,s_heel], 'k-', lw=2.0, zorder=5)
-    ax2.axhline(0, color='black', lw=0.8, zorder=3)
-    ax2.plot(0, s_toe,'ko',ms=5,zorder=6); ax2.plot(L,s_heel,'ko',ms=5,zorder=6)
-    slim = max(abs(s_toe), abs(s_heel), 10.0)*1.4; off = slim*0.06
-    ax2.text(0, s_toe+off,  f'{s_toe:.1f} kN/m²', fontsize=8, ha='left')
-    ax2.text(L, s_heel+off, f'{s_heel:.1f} kN/m²',fontsize=8, ha='right')
-    ax2.axvspan(mt1,mt2,alpha=0.10,color='gold',zorder=0)
-    ax2.axvline(mt1,color='goldenrod',lw=1.5,ls='--',alpha=0.9,zorder=3)
-    ax2.axvline(mt2,color='goldenrod',lw=1.5,ls='--',alpha=0.9,zorder=3)
-    ax2.axvline(xr, color='purple',   lw=1.5,ls='--',alpha=0.9,zorder=5)
-    ax2.text(0,  -slim*0.12,'Toe (DS)', fontsize=8,color='gray',ha='left',  va='top')
-    ax2.text(L,  -slim*0.12,'Heel (US)',fontsize=8,color='gray',ha='right', va='top')
-    ax2.text(xr, -slim*0.12,f'R x={xr:.2f}m',fontsize=7,color='purple',ha='center',va='top')
-    ax2.set_ylim(-slim,slim); ax2.set_xlim(x_lo,x_hi)
-    ax2.invert_xaxis()
-    ax2.axvline(0.0,color='black',lw=1.0,ls='-',alpha=0.4,zorder=3)
-    ax2.axvline(L,  color='black',lw=1.0,ls='-',alpha=0.4,zorder=3)
-    ax2.set_ylabel('σ (kN/m²)', fontsize=9)
-    ax2.set_xlabel('← UPSTREAM          Distance from downstream toe (m)          DOWNSTREAM →', fontsize=9)
-    ax2.set_title('Base Stress Distribution  (green=compression, red=tension)', fontsize=9)
-    ax2.grid(True, alpha=0.20)
-    # Same LEFT/RIGHT fractions and same fig width → identical x pixel scale
-    fig2.subplots_adjust(left=LEFT, right=RIGHT, top=0.80, bottom=0.30)
-
-    buf2 = io.BytesIO()
-    fig2.savefig(buf2, format='png', dpi=130)   # NO bbox_inches='tight'
-    plt.close(fig2)
-    buf2.seek(0)
-    stress_b64 = base64.b64encode(buf2.read()).decode('utf-8')
-
-    return {'dam': dam_b64, 'stress': stress_b64}
+    return {'dam': dam_b64, 'stress': ''}

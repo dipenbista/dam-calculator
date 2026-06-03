@@ -24,7 +24,7 @@ from calculator import (
     DamGeometry, MaterialProperties, WaterLevels,
     DrainageConfig, SiltConfig, BackfillConfig,
     IcePressureConfig, RockBoltConfig, RockAnchorConfig,
-    AppliedForceConfig, run_load_case, plot_to_base64
+    AppliedForceConfig, EarthquakeConfig, run_load_case, plot_to_base64
 )
 
 app = FastAPI(title="Gravity Dam Stability Calculator")
@@ -114,6 +114,13 @@ class LoadCaseRequest(BaseModel):
     run_DFV:             bool = True
     run_MFV:             bool = True
     run_DFV_no_bolts:    bool = False
+    run_EQ:              bool = False
+    eq_a_h:              float = 0.0
+    eq_a_v:              float = 0.0
+    fs_uls:              float = 1.5
+    fs_als:              float = 1.1
+    res_uls:             str   = 'middle_third'
+    res_als:             str   = 'l6'
 
 
 class ForceRow(BaseModel):
@@ -142,7 +149,8 @@ class CaseResult(BaseModel):
     FS_overturning:       float
     tension_length:       float
     forces:               List[ForceRow]
-    messages:             List[dict]   # engineering messages for this case
+    messages:             List[dict]
+    fs_threshold:         float = 1.5   # engineering messages for this case
     plot_dam_base64:      str = ''     # dam cross-section PNG (base64)
     plot_stress_base64:   str = ''     # base stress PNG (base64)
 
@@ -229,6 +237,10 @@ def calculate(req: LoadCaseRequest):
         rock_anchor = RockAnchorConfig(include=req.rock_anchor_include,
                                        force_per_m=req.rock_anchor_force_per_m,
                                        cover_from_heel=req.rock_anchor_cover_from_heel)
+        earthquake  = EarthquakeConfig(
+            include=req.run_EQ,
+            a_h=req.eq_a_h,
+            a_v=req.eq_a_v)
         applied     = AppliedForceConfig(
             vertical_forces   = [tuple(v) for v in req.applied_vertical_forces],
             horizontal_forces = [tuple(h) for h in req.applied_horizontal_forces],
@@ -254,6 +266,9 @@ def calculate(req: LoadCaseRequest):
             cases.append(('MFV',               req.MFV_us, req.MFV_ds, True))
         if req.run_DFV_no_bolts:
             cases.append(('DFV (no rock bolts)', req.DFV_us, req.DFV_ds, False))
+        if req.run_EQ and (req.eq_a_h > 0 or req.eq_a_v > 0):
+            cases.append(('HRV+EQ (X-dom)', req.HRV_us, req.HRV_ds, True))
+            cases.append(('HRV+EQ (Y-dom)', req.HRV_us, req.HRV_ds, True))
 
         if not cases:
             raise HTTPException(status_code=400, detail="No load cases selected.")
@@ -266,15 +281,36 @@ def calculate(req: LoadCaseRequest):
                 include  = req.ice_include and (case_name == 'HRV'),
                 pressure = req.ice_pressure,
             )
+            # EQ cases: scale accelerations per Eurocode 8 combination.
+            # For all non-EQ cases, earthquake is always disabled regardless
+            # of the run_EQ checkbox — earthquake forces must NEVER appear
+            # in HRV, DFV, MFV, or DFV (no rock bolts).
+            if case_name == 'HRV+EQ (X-dom)' and earthquake.include:
+                eq_for_case = EarthquakeConfig(
+                    include=True, a_h=earthquake.a_h, a_v=0.3*earthquake.a_v)
+            elif case_name == 'HRV+EQ (Y-dom)' and earthquake.include:
+                eq_for_case = EarthquakeConfig(
+                    include=True, a_h=0.3*earthquake.a_h, a_v=earthquake.a_v)
+            else:
+                eq_for_case = EarthquakeConfig(include=False)
+
+            # EQ cases exclude ice per Eurocode 8
+            ice_for_case = IcePressureConfig(include=False) \
+                if 'EQ' in case_name else ice_case
+
             res = run_load_case(
                 case_name=case_name, geom=geom, mat=mat,
                 wl_us=wl_us, wl_ds=wl_ds,
                 drainage=drainage, silt=silt, backfill=backfill,
-                ice=ice_case, rock_bolt=rock_bolt, rock_anchor=rock_anchor,
+                ice=ice_for_case, rock_bolt=rock_bolt, rock_anchor=rock_anchor,
                 applied=applied, include_rock_bolts=incl_rb,
                 rb_depth_limit_apply=req.rock_bolt_apply_depth_limit,
                 rb_depth_limit=req.rock_bolt_depth_limit,
+                earthquake=eq_for_case,
+                fs_uls=req.fs_uls, fs_als=req.fs_als,
+                res_uls=req.res_uls, res_als=req.res_als,
             )
+            res['earthquake'] = eq_for_case   # store for plotting
             # Generate plots (returns {'dam':..., 'stress':...})
             plot_imgs = plot_to_base64(res, geom, mat, drainage, silt)
 
@@ -309,6 +345,7 @@ def calculate(req: LoadCaseRequest):
                 eccentricity         = safe(res['eccentricity']),
                 in_middle_third      = res['in_middle_third'],
                 resultant_check_type = res['resultant_check_type'],
+                fs_threshold         = res.get('fs_threshold', 1.5),
                 sigma_toe            = safe(res['sigma_toe']),
                 sigma_heel           = safe(res['sigma_heel']),
                 FS_sliding           = safe(res['FS_sliding']),
@@ -413,11 +450,17 @@ def _build_workbook(title: str, blocks: list):
     H2_SZ      = 11       # load-case banner
     H3_SZ      = 10       # sub-headers
 
-    BLUE_DARK="1A3A5C"; BLUE_MID="2E6DA4"; BLUE_LIGHT="D6E8F7"
-    GREEN_DARK="1A6B3A"; GREEN_LIGHT="D6F0E0"; RED_DARK="8B1A1A"
-    RED_LIGHT="FAD7D7"; GRAY_LIGHT="F5F5F5"; WHITE="FFFFFF"
+    HEADER_FILL = "EEEEEE"   # light gray for all headers — only colour used
+    WHITE       = "FFFFFF"
+    BLUE_DARK = BLUE_MID = BLUE_LIGHT = HEADER_FILL
+    GREEN_DARK = RED_DARK = "000000"
+    GREEN_LIGHT = RED_LIGHT = GRAY_LIGHT = None
 
-    def hfill(c): return PatternFill("solid", fgColor=c)
+    def dcn(n):
+        """Display case name: internal 'HRV' → 'HRV+IS' in Excel output."""
+        return 'HRV+IS' if n == 'HRV' else n
+
+    def hfill(c): return PatternFill("solid", fgColor=c) if c else None
     def _side():  return Side(style="thin", color="AAAAAA")
     tbord = Border(left=_side(), right=_side(), top=_side(), bottom=_side())
 
@@ -427,7 +470,7 @@ def _build_workbook(title: str, blocks: list):
         cell.font = Font(bold=bold, name=BODY_FONT, size=sz, color=color)
         cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=wrap)
         if border: cell.border = tbord
-        if fill: cell.fill = fill
+        if fill is not None: cell.fill = fill
         return cell
 
     def nf(ws, r, c, val, fmt='0.00', bold=False, fill=None, align='right'):
@@ -436,7 +479,7 @@ def _build_workbook(title: str, blocks: list):
         cell.font = Font(bold=bold, name=BODY_FONT, size=BODY_SZ)
         cell.alignment = Alignment(horizontal=align, vertical="center")
         cell.border = tbord
-        if fill: cell.fill = fill
+        if fill is not None: cell.fill = fill
         return cell
 
     wb = Workbook(); wb.remove(wb.active)
@@ -468,7 +511,7 @@ def _build_workbook(title: str, blocks: list):
     setup_page(ws)
     ws.merge_cells(f"A1:{LAST_COL}1")
     t = ws["A1"]; t.value = title
-    t.font = Font(bold=True, size=H1_SZ, color=WHITE, name=BODY_FONT)
+    t.font = Font(bold=True, size=H1_SZ, color="000000", name=BODY_FONT)
     t.fill = hfill(BLUE_DARK)
     t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 26
@@ -478,7 +521,7 @@ def _build_workbook(title: str, blocks: list):
     # spread 10 headers across columns A–J
     for ci, h in enumerate(hdrs, 1):
         c = ws.cell(row=3, column=ci, value=h)
-        c.font = Font(bold=True, color=WHITE, name=BODY_FONT, size=BODY_SZ)
+        c.font = Font(bold=True, color="000000", name=BODY_FONT, size=BODY_SZ)
         c.fill = hfill(BLUE_MID)
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = tbord
@@ -488,12 +531,11 @@ def _build_workbook(title: str, blocks: list):
     for blk in blocks:
         for res in blk.results:
             isStrict = res.case_name in ("HRV", "DFV")
-            fs_ok = res.FS_sliding >= (1.5 if isStrict else 1.1)
+            fs_ok = res.FS_sliding >= getattr(res, "fs_threshold", 1.5 if isStrict else 1.1)
             mid_ok = res.in_middle_third
             sh_ok = res.sigma_heel >= 0
-            rf = hfill(GRAY_LIGHT) if r_idx % 2 == 0 else None
-            wc(ws, r_idx, 1, blk.label, bold=True, fill=rf)
-            wc(ws, r_idx, 2, res.case_name, align='center', fill=rf)
+            wc(ws, r_idx, 1, blk.label, bold=True)
+            wc(ws, r_idx, 2, dcn(res.case_name), align='center')
 
             def fs_cell(col, val, ok):
                 disp = "∞" if val >= 9998 else val
@@ -501,24 +543,20 @@ def _build_workbook(title: str, blocks: list):
                 if not isinstance(disp, str): cc.number_format = '0.000'
                 cc.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
                 cc.alignment = Alignment(horizontal="center", vertical="center")
-                cc.fill = hfill(GREEN_LIGHT) if ok else hfill(RED_LIGHT)
                 cc.border = tbord
             fs_cell(3, res.FS_sliding, fs_ok)
             fs_cell(4, res.FS_overturning, True)
 
             ck = ws.cell(row=r_idx, column=5, value="✓ OK" if mid_ok else "✗ OUT")
-            ck.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ,
-                           color=GREEN_DARK if mid_ok else RED_DARK)
-            ck.fill = hfill(GREEN_LIGHT) if mid_ok else hfill(RED_LIGHT)
+            ck.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
             ck.alignment = Alignment(horizontal="center", vertical="center")
             ck.border = tbord
-            nf(ws, r_idx, 6, res.x_resultant, '0.000', fill=rf)
-            nf(ws, r_idx, 7, res.eccentricity, '0.000', fill=rf)
-            nf(ws, r_idx, 8, res.sigma_toe, '0.0', fill=rf)
-            nf(ws, r_idx, 9, res.sigma_heel, '0.0',
-               fill=hfill(GREEN_LIGHT) if sh_ok else hfill(RED_LIGHT))
+            nf(ws, r_idx, 6, res.x_resultant, "0.000")
+            nf(ws, r_idx, 7, res.eccentricity, '0.000')
+            nf(ws, r_idx, 8, res.sigma_toe, '0.0')
+            nf(ws, r_idx, 9, res.sigma_heel, '0.0')
             nf(ws, r_idx, 10, res.tension_length if res.tension_length > 0.001 else 0,
-               '0.000', fill=rf)
+               '0.000')
             ws.row_dimensions[r_idx].height = 15
             r_idx += 1
 
@@ -544,7 +582,7 @@ def _build_workbook(title: str, blocks: list):
         ws.merge_cells(f"A1:{LAST_COL}1")
         t2 = ws["A1"]
         t2.value = f"Dam Height: {blk.label}"
-        t2.font = Font(bold=True, size=H1_SZ, color=WHITE, name=BODY_FONT)
+        t2.font = Font(bold=True, size=H1_SZ, color="000000", name=BODY_FONT)
         t2.fill = hfill(BLUE_DARK)
         t2.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 24
@@ -555,8 +593,7 @@ def _build_workbook(title: str, blocks: list):
                    f"Toe: {blk.toe_elevation:.2f} m    |    "
                    f"Base width L: {blk.base_width:.2f} m    |    "
                    f"Dam height: {blk.dam_height:.2f} m")
-        g.font = Font(size=BODY_SZ, italic=True, name=BODY_FONT, color=BLUE_DARK)
-        g.fill = hfill(BLUE_LIGHT)
+        g.font = Font(size=BODY_SZ, italic=True, name=BODY_FONT)
         g.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[2].height = 16
 
@@ -566,8 +603,8 @@ def _build_workbook(title: str, blocks: list):
             # ── 1. Load-case banner ───────────────────────────────────
             ws.merge_cells(f"A{row}:{LAST_COL}{row}")
             cb = ws[f"A{row}"]
-            cb.value = f"LOAD CASE: {res.case_name}"
-            cb.font = Font(bold=True, size=H2_SZ, color=WHITE, name=BODY_FONT)
+            cb.value = f"LOAD CASE: {dcn(res.case_name)}"
+            cb.font = Font(bold=True, size=H2_SZ, color="000000", name=BODY_FONT)
             cb.fill = hfill(BLUE_MID)
             cb.alignment = Alignment(horizontal="left", vertical="center", indent=1)
             ws.row_dimensions[row].height = 20
@@ -575,9 +612,9 @@ def _build_workbook(title: str, blocks: list):
 
             # ── 2. Warnings / messages ────────────────────────────────
             if res.messages:
+                TYPE_ICON  = {"info":"ℹ","warning":"⚠","alert":"⛔"}
                 TYPE_FILL  = {"info":"D6E8F7","warning":"FFF3CD","alert":"FAD7D7"}
                 TYPE_COLOR = {"info":"1A3A5C","warning":"7A5000","alert":"8B1A1A"}
-                TYPE_ICON  = {"info":"ℹ","warning":"⚠","alert":"⛔"}
                 for m in res.messages:
                     mtype = m.get("type","info") if isinstance(m, dict) else "info"
                     mtext = m.get("text",str(m)) if isinstance(m, dict) else str(m)
@@ -596,35 +633,33 @@ def _build_workbook(title: str, blocks: list):
             fhdr = ["Force","Stab/Dest","V (kN/m)","H (kN/m)","x_arm (m)","y_arm (m)","M_res","M_ov"]
             for ci, h in enumerate(fhdr, 1):
                 c = ws.cell(row=row, column=ci, value=h)
-                c.font = Font(bold=True, color=WHITE, name=BODY_FONT, size=BODY_SZ)
+                c.font = Font(bold=True, color="000000", name=BODY_FONT, size=BODY_SZ)
                 c.fill = hfill(BLUE_MID)
                 c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 c.border = tbord
             ws.row_dimensions[row].height = 24
             row += 1
             for f in res.forces:
-                rf2 = hfill(GREEN_LIGHT) if f.stabilising else hfill(RED_LIGHT)
-                wc(ws, row, 1, f.name, fill=rf2)
+                wc(ws, row, 1, f.name)
                 wc(ws, row, 2, "Stab" if f.stabilising else "Dest",
-                   align='center', bold=True, fill=rf2,
-                   color=GREEN_DARK if f.stabilising else RED_DARK)
-                nf(ws, row, 3, f.V,          '0.00',  fill=rf2)
-                nf(ws, row, 4, f.H,          '0.00',  fill=rf2)
-                nf(ws, row, 5, f.x_from_toe, '0.000', fill=rf2)
-                nf(ws, row, 6, f.y_from_toe, '0.000', fill=rf2)
-                nf(ws, row, 7, f.M_res,      '0.00',  fill=rf2)
-                nf(ws, row, 8, f.M_ov,       '0.00',  fill=rf2)
+                   align='center', bold=True)
+                nf(ws, row, 3, f.V,          '0.00')
+                nf(ws, row, 4, f.H,          '0.00')
+                nf(ws, row, 5, f.x_from_toe, '0.000')
+                nf(ws, row, 6, f.y_from_toe, '0.000')
+                nf(ws, row, 7, f.M_res,      '0.00')
+                nf(ws, row, 8, f.M_ov,       '0.00')
                 ws.row_dimensions[row].height = 13
                 row += 1
             # Resultant totals row (kept in force table only)
-            wc(ws, row, 1, "RESULTANT", bold=True, fill=hfill(BLUE_LIGHT))
-            wc(ws, row, 2, "", fill=hfill(BLUE_LIGHT))
-            nf(ws, row, 3, res.sum_V,   '0.00', bold=True, fill=hfill(BLUE_LIGHT))
-            nf(ws, row, 4, res.H_net,   '0.00', bold=True, fill=hfill(BLUE_LIGHT))
-            wc(ws, row, 5, "",                   fill=hfill(BLUE_LIGHT))
-            wc(ws, row, 6, "",                   fill=hfill(BLUE_LIGHT))
-            nf(ws, row, 7, res.sum_M_res,'0.00', bold=True, fill=hfill(BLUE_LIGHT))
-            nf(ws, row, 8, res.sum_M_ov, '0.00', bold=True, fill=hfill(BLUE_LIGHT))
+            wc(ws, row, 1, "RESULTANT", bold=True)
+            wc(ws, row, 2, "")
+            nf(ws, row, 3, res.sum_V,   '0.00', bold=True)
+            nf(ws, row, 4, res.H_net,   '0.00', bold=True)
+            wc(ws, row, 5, "")
+            wc(ws, row, 6, "")
+            nf(ws, row, 7, res.sum_M_res,'0.00', bold=True)
+            nf(ws, row, 8, res.sum_M_ov, '0.00', bold=True)
             ws.row_dimensions[row].height = 14
             row += 2   # spacer
 
@@ -634,14 +669,14 @@ def _build_workbook(title: str, blocks: list):
             hdr2 = ["Result", "Value", "Status", "Note / Range"]
             for ci, h in enumerate(hdr2, 1):
                 c = ws.cell(row=row, column=ci, value=h)
-                c.font = Font(bold=True, color=WHITE, name=BODY_FONT, size=BODY_SZ)
+                c.font = Font(bold=True, color="000000", name=BODY_FONT, size=BODY_SZ)
                 c.fill = hfill(BLUE_MID)
                 c.alignment = Alignment(horizontal="center", vertical="center")
                 c.border = tbord
             ws.row_dimensions[row].height = 16
             row += 1
 
-            fs_thr = 1.5 if res.case_name in ("HRV","DFV") else 1.1
+            fs_thr = getattr(res, "fs_threshold", 1.5 if res.case_name in ("HRV","DFV") else 1.1)
             L = res.x_resultant / (1 - res.eccentricity / (res.x_resultant or 1))                 if False else None  # compute L from geometry info stored in block
             # Compute L (base width) from the block context
             blk_L = blk.base_width   # metres
@@ -669,55 +704,41 @@ def _build_workbook(title: str, blocks: list):
                 ("Tension len (m)", res.tension_length,  res.tension_length < 0.001, '0.000', ""),
             ]
             for (lbl, val, ok, fmt, note) in items:
-                wc(ws, row, 1, lbl, bold=True, fill=hfill(BLUE_LIGHT))
+                wc(ws, row, 1, lbl, bold=True)
                 cc = ws.cell(row=row, column=2, value=val)
                 if fmt != '@':
                     cc.number_format = fmt
                     if isinstance(val, (int,float)) and val >= 9998: cc.value = "∞"
                 cc.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
                 cc.alignment = Alignment(horizontal="center", vertical="center")
-                cc.fill = (hfill(GREEN_LIGHT) if ok is True else
-                           hfill(RED_LIGHT) if ok is False else hfill(GRAY_LIGHT))
                 cc.border = tbord
                 # Status column
                 if ok is None:
-                    wc(ws, row, 3, "—", align='center', fill=hfill(GRAY_LIGHT))
+                    wc(ws, row, 3, "—", align='center')
                 else:
-                    wc(ws, row, 3, status_txt(ok), align='center', bold=True,
-                       color=GREEN_DARK if ok else RED_DARK,
-                       fill=hfill(GREEN_LIGHT) if ok else hfill(RED_LIGHT))
+                    wc(ws, row, 3, status_txt(ok), align='center', bold=True)
                 # Note column
-                wc(ws, row, 4, note, fill=hfill(GRAY_LIGHT), color="444444",
-                   wrap=True, sz=BODY_SZ-1)
+                wc(ws, row, 4, note, wrap=True, sz=BODY_SZ-1)
                 ws.row_dimensions[row].height = 14
                 row += 1
             fs_table_bottom = row - 1
 
             # ── Diagram placement ─────────────────────────────────────
-            # Always place BELOW the FS table. Dam and stress are stacked
-            # with no gap between them so they visually share the same x-axis.
+            # Place dam figure below the FS table.
             dam_b64    = getattr(res, "plot_dam_base64", "") or ""
-            stress_b64 = getattr(res, "plot_stress_base64", "") or ""
             target_w   = 300      # px — fits A4 portrait width
 
-            dam_rows = stress_rows = 0
-            im = im2 = None
+            dam_rows = 0
+            im = None
             if dam_b64:
                 im = XLImage(io.BytesIO(base64.b64decode(dam_b64)))
                 im.height = int(target_w * im.height / im.width) if im.width else 300
                 im.width  = target_w
                 dam_rows = int(im.height / 18) + 1
-            if stress_b64:
-                im2 = XLImage(io.BytesIO(base64.b64decode(stress_b64)))
-                im2.height = int(target_w * im2.height / im2.width) if im2.width else 120
-                im2.width  = target_w
-                stress_rows = int(im2.height / 18) + 1
 
-            # Place below the FS table, dam directly above stress (no blank row)
             below = fs_table_bottom + 2
-            if im:  ws.add_image(im,  f"A{below}")
-            if im2: ws.add_image(im2, f"A{below + dam_rows}")   # no +1 gap
-            row = below + dam_rows + stress_rows + 2
+            if im: ws.add_image(im, f"A{below}")
+            row = below + dam_rows + 2
 
     return wb
 
