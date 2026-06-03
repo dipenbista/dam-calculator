@@ -318,28 +318,45 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-3, 108
-3, 109
-3.4, 109
-3.4, 108
+0, 101
+2, 101
+4, 106
 5, 108
-6.5, 107
+5, 109
+5.4, 109
+5.4, 108
+7, 108
+8, 107
 12, 100</textarea>
       <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
-        <b>Upstream top point</b> — the corner where the crest meets the
-        upstream face. Used to identify the upstream and downstream faces,
-        and to determine the heel (lowest point on the upstream face) and
-        toe (lowest point on the downstream face). Must be set correctly.
+        <b>Upstream top point (UTP)</b> — the polygon vertex where the dam crest
+        meets the upstream face. The calculator uses this to identify the heel and
+        toe and split the polygon into upstream/downstream faces.
+        <b style="color:#c0392b">If this is wrong, all results will be wrong.</b>
       </p>
       <div class="row2" style="margin-top:6px">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="3" step="0.1">
+          <input type="number" id="utp_x" value="5" step="0.1"
+                 oninput="onUTPChange()" style="border:2px solid #ccc">
         </div>
         <div>
           <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="109" step="0.1">
+          <input type="number" id="utp_y" value="109" step="0.1"
+                 oninput="onUTPChange()" style="border:2px solid #ccc">
         </div>
+      </div>
+      <div id="utp-status" style="font-size:0.75rem;margin-top:6px;padding:5px 8px;
+           border-radius:4px;display:none"></div>
+      <div class="toggle-row" style="margin-top:8px;padding:6px 8px;border-radius:4px;
+           background:#fff8e1;border:1px solid #f9a825">
+        <label class="switch">
+          <input type="checkbox" id="utp_confirmed" onchange="onUTPConfirm()">
+          <span class="slider"></span>
+        </label>
+        <label style="color:#7a5000;font-weight:600;font-size:0.8rem">
+          I have verified the upstream top point is correct
+        </label>
       </div>
     </div>
   </div>
@@ -375,7 +392,7 @@
     </div>
     <div class="card-body">
       <label>Unit weight of dam (kN/m³)</label>
-      <input type="number" id="uw_dam"   value="23"  step="0.1">
+      <input type="number" id="uw_dam"   value="24"  step="0.1">
       <label>Unit weight of water (kN/m³)</label>
       <input type="number" id="uw_water" value="10"  step="0.1">
       <label>Friction coefficient (μ)</label>
@@ -443,7 +460,7 @@
       </div>
       <div class="sub-fields collapsed" id="bf_sub">
         <label>Backfill surface elevation (m absolute)</label>
-        <input type="number" id="bf_h"   value="101.0" step="0.1">
+        <input type="number" id="bf_h"   value="100.0" step="0.1">
         <label>Ka (pressure coeff)</label>
         <input type="number" id="bf_Ka"  value="0.333" step="0.001">
         <label>Unit weight dry (kN/m³)</label>
@@ -487,7 +504,7 @@
         <label>Force per metre width (kN/m)</label>
         <input type="number" id="rb_force" value="144" step="1">
         <label>Cover from heel (m)</label>
-        <input type="number" id="rb_cover" value="1.0" step="0.1">
+        <input type="number" id="rb_cover" value="0.5" step="0.1">
         <div class="toggle-row" style="margin-top:8px">
           <label class="switch">
             <input type="checkbox" id="rb_limit_on" checked onchange="toggleRbLimit()">
@@ -1109,6 +1126,69 @@ function computeUTP() {
   return { x: n('utp_x'), y: n('utp_y') };
 }
 
+// ── UTP validation ────────────────────────────────────────────────────────────
+const UTP_TOL = 0.15;   // metres tolerance for vertex match
+
+function utpMatchesVertex() {
+  const pts = parseCoordsQuiet(document.getElementById('coords').value);
+  if (!pts || pts.length < 3) return false;
+  const ux = n('utp_x'), uy = n('utp_y');
+  if (isNaN(ux) || isNaN(uy)) return false;
+  return pts.some(p => Math.abs(p.x - ux) <= UTP_TOL && Math.abs(p.y - uy) <= UTP_TOL);
+}
+
+function updateUTPStatus() {
+  const status = document.getElementById('utp-status');
+  if (!status) return;
+  const pts = parseCoordsQuiet(document.getElementById('coords').value);
+  if (!pts || pts.length < 3) { status.style.display = 'none'; return; }
+  const valid = utpMatchesVertex();
+  status.style.display = 'block';
+  const xEl = document.getElementById('utp_x');
+  const yEl = document.getElementById('utp_y');
+  if (valid) {
+    status.style.background = '#e8f5e9'; status.style.color = '#1b5e20';
+    status.style.border = '1px solid #66bb6a';
+    status.textContent = '✓ UTP matches a polygon vertex';
+    if (xEl) xEl.style.border = '2px solid #66bb6a';
+    if (yEl) yEl.style.border = '2px solid #66bb6a';
+  } else {
+    status.style.background = '#ffebee'; status.style.color = '#b71c1c';
+    status.style.border = '1px solid #ef9a9a';
+    const ux = n('utp_x'), uy = n('utp_y');
+    let nearest = null, nearestDist = Infinity;
+    pts.forEach(p => { const d = Math.hypot(p.x-ux, p.y-uy); if (d < nearestDist) { nearestDist=d; nearest=p; }});
+    const hint = nearest ? ` Nearest vertex: (${nearest.x}, ${nearest.y}) — ${nearestDist.toFixed(2)} m away.` : '';
+    status.textContent = `✗ UTP does not match any polygon vertex (±${UTP_TOL} m tolerance).${hint}`;
+    if (xEl) xEl.style.border = '2px solid #ef5350';
+    if (yEl) yEl.style.border = '2px solid #ef5350';
+  }
+}
+
+function updateCalcButton() {
+  const btn = document.getElementById('run-btn');
+  if (!btn) return;
+  const confirmed = document.getElementById('utp_confirmed')?.checked;
+  const valid     = utpMatchesVertex();
+  const ok        = confirmed && valid;
+  btn.disabled          = !ok;
+  btn.style.opacity     = ok ? '1' : '0.45';
+  btn.style.cursor      = ok ? 'pointer' : 'not-allowed';
+  btn.title = ok ? '' : (!valid ? 'UTP must match a polygon vertex' :
+                                  'Please confirm the upstream top point');
+}
+
+function onUTPChange() {
+  document.getElementById('utp_confirmed').checked = false;
+  updateUTPStatus();
+  updateCalcButton();
+  updateLivePreview();
+}
+
+function onUTPConfirm() {
+  updateCalcButton();
+}
+
 function toggleEqOn() {
   const on = document.getElementById('eq_on').checked;
   const runEQ = document.getElementById('run_EQ');
@@ -1524,7 +1604,18 @@ window.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', updateLivePreview);
   });
+
+  // When coordinates change, UTP may no longer be valid — force re-confirmation
+  const coordsEl = document.getElementById('coords');
+  if (coordsEl) coordsEl.addEventListener('input', () => {
+    document.getElementById('utp_confirmed').checked = false;
+    updateUTPStatus();
+    updateCalcButton();
+  });
+
   updateLivePreview();
+  updateUTPStatus();
+  updateCalcButton();
 });
 
 // ── Parse coordinate textarea ────────────────────────────
@@ -1545,6 +1636,12 @@ function cb(id) { return document.getElementById(id).checked; }
 
 // ── Run ──────────────────────────────────────────────────
 async function runCalc() {
+  if (!utpMatchesVertex() || !document.getElementById('utp_confirmed').checked) {
+    document.getElementById('error-box').style.display = 'block';
+    document.getElementById('error-box').textContent =
+      'Please verify and confirm the upstream top point before calculating.';
+    return;
+  }
   const btn = document.getElementById('run-btn');
   btn.disabled = true;
   document.getElementById('placeholder').style.display  = 'none';
