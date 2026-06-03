@@ -318,14 +318,11 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-0, 101
-2, 101
-4, 106
+3, 108
+3, 109
+3.4, 109
+3.4, 108
 5, 108
-5, 109
-5.4, 109
-5.4, 108
-7, 108
 8, 107
 12, 100</textarea>
       <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
@@ -337,7 +334,7 @@
       <div class="row2" style="margin-top:6px">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="5" step="0.1">
+          <input type="number" id="utp_x" value="3" step="0.1">
         </div>
         <div>
           <label>Upstream top point Y</label>
@@ -378,7 +375,7 @@
     </div>
     <div class="card-body">
       <label>Unit weight of dam (kN/m³)</label>
-      <input type="number" id="uw_dam"   value="24"  step="0.1">
+      <input type="number" id="uw_dam"   value="23"  step="0.1">
       <label>Unit weight of water (kN/m³)</label>
       <input type="number" id="uw_water" value="10"  step="0.1">
       <label>Friction coefficient (μ)</label>
@@ -446,7 +443,7 @@
       </div>
       <div class="sub-fields collapsed" id="bf_sub">
         <label>Backfill surface elevation (m absolute)</label>
-        <input type="number" id="bf_h"   value="100.0" step="0.1">
+        <input type="number" id="bf_h"   value="101.0" step="0.1">
         <label>Ka (pressure coeff)</label>
         <input type="number" id="bf_Ka"  value="0.333" step="0.001">
         <label>Unit weight dry (kN/m³)</label>
