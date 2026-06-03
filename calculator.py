@@ -113,13 +113,36 @@ class DamGeometry:
                 i = (i + direction) % n
             return path
 
-        def best_face(start, end):
+        # US face: walk from heel to us_top.
+        # Pick the shorter path that ends at or above start elevation.
+        def best_us_face(start, end):
             cands = [walk(start, end, d) for d in [1, -1]]
             cands = [p for p in cands if p[-1][1] >= p[0][1]]
             return min(cands, key=len) if cands else [coords[start], coords[end]]
 
-        self.us_face = best_face(heel_idx, us_top_idx)
-        self.ds_face = best_face(toe_idx,  ds_top_idx)
+        # DS face: walk from toe to ds_top.
+        # Among valid paths (end y ≥ start y), pick the one whose intermediate
+        # vertices all have x > 0 (stay on the downstream slope, never visiting
+        # the heel side). This correctly excludes paths that detour through the
+        # upstream face when both paths have the same length.
+        def best_ds_face(start, end):
+            cands = [walk(start, end, d) for d in [1, -1]]
+            cands = [p for p in cands if p[-1][1] >= p[0][1]]
+            if not cands:
+                return [coords[start], coords[end]]
+            heel_x = self.upstream_heel[0]
+            # Prefer the path whose vertices stay well below heel_x
+            # (i.e. don't wander across to the upstream face)
+            def max_x(path): return max(p[0] for p in path)
+            # DS face vertices should have x < heel_x (they're closer to the toe)
+            ds_cands = [p for p in cands if max_x(p) < heel_x - 1e-6]
+            if ds_cands:
+                return min(ds_cands, key=len)
+            # Fallback: pick shorter path
+            return min(cands, key=len)
+
+        self.us_face = best_us_face(heel_idx, us_top_idx)
+        self.ds_face = best_ds_face(toe_idx,  ds_top_idx)
 
 
 @dataclass
@@ -460,16 +483,19 @@ def compute_backfill(geom, mat, bf, wl_ds_abs):
     h_dry   = hb - h_sub
     if bf.include_pressure:
         if h_dry > 0:
-            F = 0.5*Ka*bf.unit_weight_dry*h_dry**2
+            F   = 0.5*Ka*bf.unit_weight_dry*h_dry**2
+            y_r = h_sub + h_dry/3                           # resultant height (from base)
+            x_r = x_on_face_at_y(geom.ds_face, y_r)        # x on DS face at that height
             forces.append(make_force('Backfill Pressure (dry)', H=F,
-                x=0.0, y=h_sub+h_dry/3, stabilising=True))
+                x=x_r, y=y_r, stabilising=True))
         if h_sub > 0:
             sur = Ka*bf.unit_weight_dry*h_dry
             gs  = bf.unit_weight_submerged
             Fr  = sur*h_sub; Ft = 0.5*Ka*gs*h_sub**2; Fs = Fr+Ft
             yc  = (Fr*h_sub/2+Ft*h_sub/3)/Fs if Fs>1e-9 else h_sub/3
+            x_r = x_on_face_at_y(geom.ds_face, yc)         # x on DS face at resultant height
             forces.append(make_force('Backfill Pressure (sub)', H=Fs,
-                x=0.0, y=yc, stabilising=True))
+                x=x_r, y=yc, stabilising=True))
     if bf.include_weight:
         x_at_hb = x_on_face_at_y(geom.ds_face, hb)
         poly = [(0.0,0.0)]
