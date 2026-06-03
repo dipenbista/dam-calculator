@@ -587,6 +587,56 @@
   </div>
 
   <!-- 11. Load cases to run -->
+  <!-- Earthquake -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      🌍 Earthquake (HRV+EQ) <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="eq_on" onchange="toggleEqOn()"><span class="slider"></span></label>
+        <label>Include earthquake load case</label>
+      </div>
+      <div class="sub-fields collapsed" id="eq_sub">
+        <label>Horizontal acceleration aₕ (m/s²)</label>
+        <input type="number" id="eq_ah" value="1.5" step="0.01" min="0">
+        <label>Vertical acceleration aᵥ (m/s²)</label>
+        <input type="number" id="eq_av" value="0.75" step="0.01" min="0">
+        <p style="font-size:0.72rem;color:#888;margin-top:6px;line-height:1.5">
+          Two sub-cases per EC8: X-dom (full aₕ, 0.3aᵥ) and Y-dom (0.3aₕ, full aᵥ).<br>
+          Worst case assumed: horizontal toward dam + vertical upward. Ice excluded.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Analysis thresholds -->
+  <div class="card">
+    <div class="card-head" onclick="toggleCard(this)">
+      ⚖️ Acceptance Criteria <span class="toggle">▾</span>
+    </div>
+    <div class="card-body">
+      <p style="font-size:0.72rem;color:#666;margin-bottom:8px;line-height:1.6">
+        <b>ULS</b> (Ultimate Limit State) — normal operating conditions: HRV+IS, DFV<br>
+        <b>ALS</b> (Accidental Limit State) — extreme/rare events: MFV, DFV (no bolts), EQ
+      </p>
+      <label>FS Sliding — ULS</label>
+      <input type="number" id="fs_uls" value="1.5" step="0.05" min="0">
+      <label>FS Sliding — ALS</label>
+      <input type="number" id="fs_als" value="1.1" step="0.05" min="0">
+      <label>Resultant criterion — ULS</label>
+      <select id="res_uls">
+        <option value="middle_third" selected>Middle third (L/3 – 2L/3)</option>
+        <option value="l6">L/6 – 5L/6</option>
+      </select>
+      <label>Resultant criterion — ALS</label>
+      <select id="res_als">
+        <option value="l6" selected>L/6 – 5L/6</option>
+        <option value="middle_third">Middle third (L/3 – 2L/3)</option>
+      </select>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-head" onclick="toggleCard(this)">
       📋 Load Cases to Run <span class="toggle">▾</span>
@@ -607,6 +657,10 @@
       <div class="toggle-row">
         <label class="switch"><input type="checkbox" id="run_DFV_nb"><span class="slider"></span></label>
         <label>DFV (no rock bolts)</label>
+      </div>
+      <div class="toggle-row">
+        <label class="switch"><input type="checkbox" id="run_EQ"><span class="slider"></span></label>
+        <label>HRV+EQ — Seismic (EC8)</label>
       </div>
     </div>
   </div>
@@ -1058,6 +1112,13 @@ function computeUTP() {
   return { x: n('utp_x'), y: n('utp_y') };
 }
 
+function toggleEqOn() {
+  const on = document.getElementById('eq_on').checked;
+  const runEQ = document.getElementById('run_EQ');
+  if (runEQ) runEQ.checked = on;
+  toggleSub('eq_sub', document.getElementById('eq_on'));
+}
+
 function toggleRbLimit() {
   const on  = document.getElementById('rb_limit_on').checked;
   const sub = document.getElementById('rb_limit_sub');
@@ -1462,7 +1523,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', updateLivePreview);
   });
-  ['silt_on','bf_p_on','rb_on','ra_on','drain_on','rb_limit_on'].forEach(id => {
+  ['silt_on','bf_p_on','rb_on','ra_on','drain_on','rb_limit_on','eq_on','utp_override'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('change', updateLivePreview);
   });
@@ -1546,6 +1607,13 @@ async function runCalc() {
       run_DFV:          cb('run_DFV'),
       run_MFV:          cb('run_MFV'),
       run_DFV_no_bolts: cb('run_DFV_nb'),
+      run_EQ:           cb('run_EQ'),
+      eq_a_h:           n('eq_ah'),
+      eq_a_v:           n('eq_av'),
+      fs_uls:        n('fs_uls'),
+      fs_als:       n('fs_als'),
+      res_uls:       document.getElementById('res_uls').value,
+      res_als:      document.getElementById('res_als').value,
 
       applied_vertical_forces:   collectForceTable('vtable'),
       applied_horizontal_forces: collectForceTable('htable'),
@@ -1615,8 +1683,8 @@ function renderResults(data) {
     //   HRV / DFV            → FS_slide ≥ 1.5,  resultant within L/3–2L/3
     //   MFV / DFV (no bolts) → FS_slide ≥ 1.1,  resultant within L/6–5L/6
     // FS Overturning: no colour applied (null)
-    const isStrict   = (res.case_name === 'HRV' || res.case_name === 'DFV');
-    const fsThresh   = isStrict ? 1.5 : 1.1;
+    const fsThresh   = res.fs_threshold !== undefined ? res.fs_threshold
+                     : (res.case_name === 'HRV' || res.case_name === 'DFV') ? 1.5 : 1.1;
     const fsSlideOk  = res.FS_sliding >= fsThresh;
     // Resultant check — use the flag already computed by the backend
     // (backend sets resultant_check_type to "Middle third" for HRV/DFV
@@ -1632,8 +1700,8 @@ function renderResults(data) {
 
     // Build threshold label for FS Sliding card
     const fsLabel = `FS Sliding (≥ ${fsThresh.toFixed(1)})`;
-    // Build resultant label showing which zone applies
-    const midLabel = isStrict
+    // Build resultant label from backend-provided resultant_check_type
+    const midLabel = res.resultant_check_type === 'Middle third'
       ? `Resultant (L/3 – 2L/3)`
       : `Resultant (L/6 – 5L/6)`;
 
