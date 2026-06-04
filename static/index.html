@@ -1041,10 +1041,45 @@ async function downloadExcelMH() {
   btn.disabled = true;
   btn.textContent = '⏳ Generating…';
   try {
+    const mainWithParams = JSON.parse(JSON.stringify(lastResponseData));
+    if (lastRequestPayload) {
+      const p = lastRequestPayload;
+      mainWithParams.params = {
+        toe_elevation:       mainWithParams.geometry?.toe_elevation,
+        heel_elevation:      mainWithParams.geometry?.heel_elevation,
+        base_length:         mainWithParams.geometry?.base_length_horizontal,
+        dam_height:          mainWithParams.geometry?.dam_height,
+        unit_weight_dam:     p.unit_weight_dam,
+        unit_weight_water:   p.unit_weight_water || 10,
+        friction_coeff:      p.friction_coeff,
+        HRV_us: p.HRV_us, HRV_ds: p.HRV_ds,
+        DFV_us: p.DFV_us, DFV_ds: p.DFV_ds,
+        MFV_us: p.MFV_us, MFV_ds: p.MFV_ds,
+        fs_uls: p.fs_uls || 1.5, fs_als: p.fs_als || 1.1,
+        res_uls: p.res_uls || 'middle_third', res_als: p.res_als || 'l6',
+        drainage_include:  p.drainage_include,
+        drainage_dist:     p.drainage_distance_from_heel,
+        drainage_rf:       p.drainage_reduction_factor,
+        silt_include:      p.silt_include,
+        silt_elevation:    p.silt_elevation_us,
+        silt_unit_weight:  p.silt_unit_weight_submerged,
+        silt_phi:          p.silt_phi_deg,
+        ice_include:       p.ice_include,
+        ice_pressure:      p.ice_pressure,
+        rock_bolt_include: p.rock_bolt_include,
+        rock_bolt_force:   p.rock_bolt_force_per_m,
+        rock_bolt_cover:   p.rock_bolt_cover_from_heel,
+        rock_anchor_include: p.rock_anchor_include,
+        rock_anchor_force:   p.rock_anchor_force_per_m,
+        rock_anchor_cover:   p.rock_anchor_cover_from_heel,
+        run_EQ: p.run_EQ,
+        eq_ah: p.eq_a_h, eq_av: p.eq_a_v,
+      };
+    }
     const resp = await fetch('/export_heights', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ main: lastResponseData, multi: lastMHData }),
+      body:    JSON.stringify({ main: mainWithParams, multi: lastMHData }),
     });
     if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail); }
     const blob = await resp.blob();
@@ -1079,6 +1114,42 @@ async function downloadExcel() {
     ...res,
     messages: res.messages || []
   }));
+
+  // Include input parameters for the summary sheet cover block
+  if (lastRequestPayload) {
+    const p = lastRequestPayload;
+    exportPayload.params = {
+      toe_elevation:       exportPayload.geometry?.toe_elevation,
+      heel_elevation:      exportPayload.geometry?.heel_elevation,
+      base_length:         exportPayload.geometry?.base_length_horizontal,
+      dam_height:          exportPayload.geometry?.dam_height,
+      unit_weight_dam:     p.unit_weight_dam,
+      unit_weight_water:   p.unit_weight_water || 10,
+      friction_coeff:      p.friction_coeff,
+      HRV_us: p.HRV_us, HRV_ds: p.HRV_ds,
+      DFV_us: p.DFV_us, DFV_ds: p.DFV_ds,
+      MFV_us: p.MFV_us, MFV_ds: p.MFV_ds,
+      fs_uls: p.fs_uls || 1.5, fs_als: p.fs_als || 1.1,
+      res_uls: p.res_uls || 'middle_third', res_als: p.res_als || 'l6',
+      drainage_include:  p.drainage_include,
+      drainage_dist:     p.drainage_distance_from_heel,
+      drainage_rf:       p.drainage_reduction_factor,
+      silt_include:      p.silt_include,
+      silt_elevation:    p.silt_elevation_us,
+      silt_unit_weight:  p.silt_unit_weight_submerged,
+      silt_phi:          p.silt_phi_deg,
+      ice_include:       p.ice_include,
+      ice_pressure:      p.ice_pressure,
+      rock_bolt_include: p.rock_bolt_include,
+      rock_bolt_force:   p.rock_bolt_force_per_m,
+      rock_bolt_cover:   p.rock_bolt_cover_from_heel,
+      rock_anchor_include: p.rock_anchor_include,
+      rock_anchor_force:   p.rock_anchor_force_per_m,
+      rock_anchor_cover:   p.rock_anchor_cover_from_heel,
+      run_EQ: p.run_EQ,
+      eq_ah: p.eq_a_h, eq_av: p.eq_a_v,
+    };
+  }
 
   try {
     const resp = await fetch('/export', {
