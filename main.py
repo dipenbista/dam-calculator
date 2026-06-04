@@ -24,7 +24,8 @@ from calculator import (
     DamGeometry, MaterialProperties, WaterLevels,
     DrainageConfig, SiltConfig, BackfillConfig,
     IcePressureConfig, RockBoltConfig, RockAnchorConfig,
-    AppliedForceConfig, EarthquakeConfig, run_load_case, plot_to_base64
+    AppliedForceConfig, EarthquakeConfig, run_load_case, plot_to_base64,
+    generate_detailed_calc, polygon_area_centroid
 )
 
 app = FastAPI(title="Gravity Dam Stability Calculator")
@@ -1114,5 +1115,168 @@ def export_heights(data: ExportHeightsRequest):
             headers={"Content-Disposition":
                      'attachment; filename="dam_multi_height_results.xlsx"'},
         )
+    except Exception:
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
+
+
+class DetailedCalcRequest(BaseModel):
+    """Request body for the detailed calculation viewer."""
+    request_payload: dict   # original LoadCaseRequest fields as dict
+    results: List[CaseResult]
+    geometry: GeometryInfo
+
+
+@app.post("/detailed_calc")
+def detailed_calc(data: DetailedCalcRequest):
+    """
+    Generate full detailed calculation text and return it as an HTML page
+    with <pre> formatting so the user can read and print it from the browser.
+    """
+    try:
+        p = data.request_payload
+
+        # Reconstruct objects from the stored request payload
+        coords_raw = p.get('coordinates', [])
+        coords = [(c['x'], c['y']) for c in coords_raw]
+        utp_raw = p.get('upstream_top_point', {})
+        utp = (utp_raw.get('x', 0), utp_raw.get('y', 0))
+
+        geom = DamGeometry(coords, utp)
+        mat  = MaterialProperties(
+            unit_weight_dam   = p.get('unit_weight_dam', 24.0),
+            unit_weight_water = p.get('unit_weight_water', 10.0),
+            friction_coeff    = p.get('friction_coeff', 0.75),
+        )
+        drainage = DrainageConfig(
+            include              = p.get('drainage_include', False),
+            distance_from_heel   = p.get('drainage_distance_from_heel', 0.0),
+            reduction_factor     = p.get('drainage_reduction_factor', 0.333),
+        )
+        silt = SiltConfig(
+            include                 = p.get('silt_include', False),
+            height_us               = max(p.get('silt_elevation_us', 0) - geom.heel_elevation, 0),
+            unit_weight_submerged   = p.get('silt_unit_weight_submerged', 9.0),
+            phi_deg                 = p.get('silt_phi_deg', 30.0),
+        )
+        backfill = BackfillConfig(
+            include_pressure     = p.get('backfill_pressure', False),
+            include_weight       = p.get('backfill_weight', False),
+            height               = p.get('backfill_height', 0.0),
+            coeff_pressure       = p.get('backfill_coeff', 0.333),
+            unit_weight_dry      = p.get('backfill_unit_weight_dry', 18.0),
+            unit_weight_submerged= p.get('backfill_unit_weight_sub', 10.0),
+        )
+        ice = IcePressureConfig(
+            include  = p.get('ice_include', False),
+            pressure = p.get('ice_pressure', 150.0),
+        )
+        rock_bolt = RockBoltConfig(
+            include          = p.get('rock_bolt_include', False),
+            force_per_m      = p.get('rock_bolt_force_per_m', 0.0),
+            cover_from_heel  = p.get('rock_bolt_cover_from_heel', 0.0),
+        )
+        rock_anchor = RockAnchorConfig(
+            include          = p.get('rock_anchor_include', False),
+            force_per_m      = p.get('rock_anchor_force_per_m', 0.0),
+            cover_from_heel  = p.get('rock_anchor_cover_from_heel', 0.0),
+        )
+        applied = AppliedForceConfig(
+            vertical_forces  = [tuple(v) for v in p.get('applied_vertical_forces', [])],
+            horizontal_forces= [tuple(h) for h in p.get('applied_horizontal_forces', [])],
+        )
+
+        # Water levels per case
+        wl_map = {
+            'HRV':               (p.get('HRV_us', 0), p.get('HRV_ds', 0)),
+            'DFV':               (p.get('DFV_us', 0), p.get('DFV_ds', 0)),
+            'MFV':               (p.get('MFV_us', 0), p.get('MFV_ds', 0)),
+            'DFV (no rock bolts)':(p.get('DFV_us', 0), p.get('DFV_ds', 0)),
+            'HRV+EQ (X-dom)':   (p.get('HRV_us', 0), p.get('HRV_ds', 0)),
+            'HRV+EQ (Y-dom)':   (p.get('HRV_us', 0), p.get('HRV_ds', 0)),
+        }
+
+        # EQ config per case
+        base_ah = p.get('eq_a_h', 0.0)
+        base_av = p.get('eq_a_v', 0.0)
+        run_eq  = p.get('run_EQ', False)
+
+        def eq_for(case_name):
+            if case_name == 'HRV+EQ (X-dom)' and run_eq:
+                return EarthquakeConfig(include=True, a_h=base_ah, a_v=0.3*base_av)
+            elif case_name == 'HRV+EQ (Y-dom)' and run_eq:
+                return EarthquakeConfig(include=True, a_h=0.3*base_ah, a_v=base_av)
+            return EarthquakeConfig(include=False)
+
+        # Re-run each case to get the full res dict with intermediate values
+        all_text = []
+        for cr in data.results:
+            cn = cr.case_name
+            wl_us, wl_ds = wl_map.get(cn, (p.get('HRV_us', 0), p.get('HRV_ds', 0)))
+            incl_rb = (cn != 'DFV (no rock bolts)')
+            eq_cfg  = eq_for(cn)
+            ice_case = IcePressureConfig(
+                include  = (ice.include and cn == 'HRV'),
+                pressure = ice.pressure,
+            )
+            res = run_load_case(
+                case_name=cn, geom=geom, mat=mat,
+                wl_us=wl_us, wl_ds=wl_ds,
+                drainage=drainage, silt=silt, backfill=backfill,
+                ice=ice_case, rock_bolt=rock_bolt, rock_anchor=rock_anchor,
+                applied=applied, include_rock_bolts=incl_rb,
+                rb_depth_limit_apply=p.get('rock_bolt_apply_depth_limit', True),
+                rb_depth_limit=p.get('rock_bolt_depth_limit', 7.0),
+                earthquake=eq_cfg,
+                fs_uls=p.get('fs_uls', 1.5), fs_als=p.get('fs_als', 1.1),
+                res_uls=p.get('res_uls', 'middle_third'),
+                res_als=p.get('res_als', 'l6'),
+            )
+            res['earthquake'] = eq_cfg
+            text = generate_detailed_calc(
+                res, geom, mat, wl_us, wl_ds,
+                drainage, silt, backfill, ice_case,
+                rock_bolt, rock_anchor, applied, eq_cfg)
+            all_text.append(text)
+
+        full_text = '\n\n'.join(all_text)
+
+        # Wrap in a clean printable HTML page
+        title_str = "GRAVITY DAM — DETAILED STABILITY CALCULATION"
+        html = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{title_str}</title>
+  <style>
+    body  {{ font-family: 'Courier New', Courier, monospace; font-size: 11px;
+             margin: 20mm 15mm; color: #111; background: white; }}
+    pre   {{ white-space: pre-wrap; word-break: break-word; line-height: 1.6; }}
+    h1    {{ font-family: Arial, sans-serif; font-size: 14px; margin-bottom: 4px; }}
+    p.sub {{ font-family: Arial, sans-serif; font-size: 11px; color: #555;
+             margin-top: 0; margin-bottom: 16px; }}
+    @media print {{
+      body {{ margin: 10mm; font-size: 10px; }}
+      .no-print {{ display: none; }}
+    }}
+  </style>
+</head>
+<body>
+  <h1>{title_str}</h1>
+  <p class="sub">Generated by Gravity Dam Stability Calculator
+     &nbsp;|&nbsp; Use Ctrl+P / Cmd+P to print</p>
+  <div class="no-print" style="margin-bottom:12px">
+    <button onclick="window.print()"
+      style="padding:6px 18px;font-size:12px;cursor:pointer;
+             background:#2e6da4;color:white;border:none;border-radius:4px">
+      🖨 Print
+    </button>
+  </div>
+  <pre>{full_text}</pre>
+</body>
+</html>"""
+
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=html)
+
     except Exception:
         raise HTTPException(status_code=500, detail=traceback.format_exc())
