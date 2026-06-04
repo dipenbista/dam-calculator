@@ -882,21 +882,29 @@ def run_load_case(case_name, geom, mat, wl_us, wl_ds,
 # PLOT → base64 PNG  (no files written to disk)
 # =============================================================================
 
-def plot_to_base64(res, geom, mat, drainage, silt):
+def plot_to_base64(res, geom, mat, drainage, silt, backfill=None):
     """Render the dam figure and return a base64-encoded PNG string.
 
     Fixed display scales:
       Pressures  : 1/10   — 1 kPa  = 0.1 m  (e.g. 60 kPa → 6 m polygon width)
-      Forces     : 1/100  — 1 kN/m = 0.01 m (e.g. 2400 kN/m → 24 m arrow)
+      Forces     : 1/10   — 1 kN/m = 0.1 m  (e.g. 200 kN/m → 20 m arrow)
+      Resultant  : 1/100  — 1 kN/m = 0.01 m (overall resultant arrow)
     """
-    kN2t = 1.0 / 10.0
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as ticker
+    import io, base64, math
+    import numpy as np
+
     p_scale         = 1.0   # pressure:  p2w(p)  = p / 10
     f_scale         = 1.0   # force:     f2l(F)  = F / 10
-    resultant_scale = 10.0  # resultant: r2l(F)  = F / 100 (thinner, shorter)
+    resultant_scale = 10.0  # resultant: r2l(F)  = F / 100
+    kN2t = 1.0 / 10.0
 
     def p2w(p): return (p * kN2t) / p_scale
-    def f2l(F): return (F * kN2t) / f_scale
-    def r2l(F): return (F * kN2t) / resultant_scale
+    def f2l(F): return (abs(F) * kN2t) / f_scale
+    def r2l(F): return (abs(F) * kN2t) / resultant_scale
 
     L           = geom.base_length_horizontal
     dam_top     = geom.dam_top_elevation_rel
@@ -904,6 +912,7 @@ def plot_to_base64(res, geom, mat, drainage, silt):
     toe_y       = geom.downstream_toe[1]
     gw          = mat.unit_weight_water
     y_base_ref  = min(y for _, y in geom.coordinates)
+    utp_x       = geom.upstream_top_point[0]
 
     h_us_full = res['wl_us'] - geom.heel_elevation
     h_ds_full = res['wl_ds'] - geom.toe_elevation
@@ -911,58 +920,79 @@ def plot_to_base64(res, geom, mat, drainage, silt):
     h_ds_act  = max(min(h_ds_full, dam_top - toe_y),  0.0)
     h_us_u    = max(h_us_full, 0.0)
     h_ds_u    = max(h_ds_full, 0.0)
+    Ka_silt   = (math.tan(math.radians(45 - silt.phi_deg / 2))) ** 2 if silt.include else 0.0
 
+    # Outer edges for stacked polygons (pressure, silt, Westergaard, backfill)
+    us_water_outer = heel_x + p2w(gw * h_us_act)
+    silt_max_w     = p2w(gw * Ka_silt * silt.height_us) if (silt.include and silt.height_us > 0) else 0.0
+    wg_anchor      = us_water_outer + silt_max_w   # Westergaard starts where silt ends
+    ds_water_outer = -p2w(gw * h_ds_act)           # DS pressure outer edge (negative x)
+
+    # EQ Westergaard geometry
+    eq_cfg      = res.get('earthquake')
+    eq_forces   = [f for f in res['forces'] if 'Westergaard' in f['name']]
+    g_val       = 9.81
+    ah_g        = (eq_cfg.a_h / g_val) if eq_cfg else 0.0
+    us_face_s   = sorted(geom.us_face, key=lambda p: p[1])
+    dx_f = us_face_s[-1][0] - us_face_s[0][0] if len(us_face_s) >= 2 else 0
+    dy_f = us_face_s[-1][1] - us_face_s[0][1] if len(us_face_s) >= 2 else 1
+    theta_f  = math.atan2(abs(dx_f), abs(dy_f)) if abs(dy_f) > 1e-9 else math.pi / 2
+    cos2_f   = math.cos(theta_f) ** 2
+    wg_base_w = p2w((7/8) * ah_g * gw * math.sqrt(h_us_act * h_us_act) * cos2_f) if (eq_forces and h_us_act > 0) else 0.0
+
+    # Rock bolt / anchor forces
+    rb_f = next((f for f in res['forces'] if 'Rock Bolt'   in f['name']), None)
+    ra_f = next((f for f in res['forces'] if 'Rock Anchor' in f['name']), None)
+    rb_line_len = f2l(rb_f['V']) if rb_f else 0.0   # below base, 1/10 scale
+    anchor_ext  = 5.0                                 # RA extends 5 m below base
+
+    # Backfill
+    bf_forces    = [f for f in res['forces'] if 'Backfill Pressure' in f['name']]
+    bf_max_w     = max((p2w(f['H']) for f in bf_forces), default=0.0) * 1.0
+
+    # Axis limits — include all polygon extents and RB line depth
     p_us_max_w   = p2w(gw * max(h_us_full, 0.0)) * 1.7
     p_ds_max_w   = p2w(gw * max(h_ds_full, 0.0)) * 1.7
-    uplift_depth = p2w(gw * max(h_us_u, h_ds_u)) * 1.5
-    pad_us = p_us_max_w + 1.0
-    pad_ds = p_ds_max_w + 1.0
+    uplift_depth = max(p2w(gw * max(h_us_u, h_ds_u)) * 1.5,
+                       rb_line_len + 0.5,
+                       anchor_ext + 0.5)
+    pad_us = p_us_max_w + silt_max_w + wg_base_w + 1.2
+    pad_ds = p_ds_max_w + bf_max_w + 1.0
 
-    fig_w_in    = 160.0 / 25.4
-    x_lo = -pad_ds - 0.3
-    x_hi =  heel_x + pad_us + 0.3
-    x_span = x_hi - x_lo
-    y_lo = y_base_ref - uplift_depth - 0.5
-    y_hi = dam_top * 1.45
-    y_span = y_hi - y_lo
-    # Equal aspect: dam panel height set so 1 m in x == 1 m in y at fig width
+    fig_w_in = 160.0 / 25.4
+    x_lo     = -pad_ds - 0.3
+    x_hi     =  heel_x + pad_us + 0.3
+    x_span   = x_hi - x_lo
+    y_lo     = y_base_ref - uplift_depth - 0.5
+    y_hi     = dam_top * 1.45
+    y_span   = y_hi - y_lo
     main_h_in = (y_span / x_span) * fig_w_in
 
-    # ── FIGURE 1: dam cross-section only ──────────────────────────────
     fig = plt.figure(figsize=(fig_w_in, main_h_in))
     ax  = fig.add_subplot(1, 1, 1)
 
-    # Dam body
-    xs = [p[0] for p in geom.coordinates] + [geom.coordinates[0][0]]
-    ys = [p[1] for p in geom.coordinates] + [geom.coordinates[0][1]]
-    ax.fill(xs, ys, color='lightgray', ec='black', lw=1.5, zorder=3)
-
-    # Water polygons
+    # ── Water body fills ──────────────────────────────────────────────────────
     def water_polygon_us(wl_h):
         y_wl = heel_y + wl_h; y_crest = dam_top
-        overtopping = y_wl > y_crest
-        face = sorted(geom.us_face, key=lambda p: p[1])
-        if not overtopping:
+        face  = sorted(geom.us_face, key=lambda p: p[1])
+        if y_wl <= y_crest:
             x_us_wl = x_on_face_at_y(geom.us_face, y_wl)
             wx = [x_hi, x_hi, x_us_wl]
             wy = [heel_y, y_wl, y_wl]
             for fx, fy in reversed(face):
-                if heel_y - 1e-9 <= fy <= y_crest + 1e-9:
-                    wx.append(fx); wy.append(fy)
+                if heel_y - 1e-9 <= fy <= y_crest + 1e-9: wx.append(fx); wy.append(fy)
         else:
-            x_us_crest = x_on_face_at_y(geom.us_face, y_crest)
-            wx = [x_hi, x_hi, x_us_crest, x_us_crest]
+            x_us_cr = x_on_face_at_y(geom.us_face, y_crest)
+            wx = [x_hi, x_hi, x_us_cr, x_us_cr]
             wy = [heel_y, y_wl, y_wl, y_crest]
             for fx, fy in reversed(face):
-                if heel_y - 1e-9 <= fy <= y_crest + 1e-9:
-                    wx.append(fx); wy.append(fy)
+                if heel_y - 1e-9 <= fy <= y_crest + 1e-9: wx.append(fx); wy.append(fy)
         return wx, wy
 
     def water_polygon_ds(wl_h):
-        y_clip = min(toe_y + wl_h, dam_top)
-        x_face = x_on_face_at_y(geom.ds_face, y_clip)
-        face   = sorted([(x,y) for x,y in geom.ds_face if toe_y-1e-9 <= y <= y_clip+1e-9],
-                        key=lambda p: p[1])
+        y_clip  = min(toe_y + wl_h, dam_top)
+        x_face  = x_on_face_at_y(geom.ds_face, y_clip)
+        face    = sorted([(x, y) for x, y in geom.ds_face if toe_y - 1e-9 <= y <= y_clip + 1e-9], key=lambda p: p[1])
         wx = [0.0]; wy = [toe_y]
         for fx, fy in face[1:]: wx.append(fx); wy.append(fy)
         if abs(face[-1][1] - y_clip) > 1e-6: wx.append(x_face); wy.append(y_clip)
@@ -973,31 +1003,33 @@ def plot_to_base64(res, geom, mat, drainage, silt):
         wx, wy = water_polygon_us(h_us_full)
         ax.fill(wx, wy, color='#aaccff', alpha=0.35, zorder=1)
         wl_y_us = heel_y + h_us_full
-        ax.plot([heel_x, x_hi], [wl_y_us, wl_y_us], color='#2255cc', lw=1.5, ls='--', zorder=2)
-        ax.text(heel_x+(x_hi-heel_x)*0.05, wl_y_us+dam_top*0.025,
-                f'WL_US={res["wl_us"]:.2f} m  h={h_us_full:.2f} m',
-                fontsize=8, color='#1a3399', zorder=6)
+        # WL line extends to dam face at WL elevation, or to UTP x-plane if overtopping
+        wl_right_x = x_on_face_at_y(geom.us_face, wl_y_us) if wl_y_us <= dam_top else utp_x
+        ax.plot([x_hi, wl_right_x], [wl_y_us, wl_y_us], color='#2255cc', lw=1.5, ls='--', zorder=2)
+        ax.text(heel_x + (x_hi - heel_x) * 0.05, wl_y_us + dam_top * 0.025,
+                f'WL_US={res["wl_us"]:.2f} m  h={h_us_full:.2f} m', fontsize=8, color='#1a3399', zorder=6)
 
     if h_ds_full > 0:
-        wx, wy = water_polygon_ds(min(h_ds_full, dam_top-toe_y))
+        wx, wy = water_polygon_ds(min(h_ds_full, dam_top - toe_y))
         ax.fill(wx, wy, color='#aaccff', alpha=0.35, zorder=1)
-        wl_y_ds = toe_y + min(h_ds_full, dam_top-toe_y)
+        wl_y_ds   = toe_y + min(h_ds_full, dam_top - toe_y)
         x_face_wl = x_on_face_at_y(geom.ds_face, wl_y_ds)
         ax.plot([x_lo, x_face_wl], [wl_y_ds, wl_y_ds], color='#2255cc', lw=1.5, ls='--', zorder=2)
-        ax.text(x_lo+(x_face_wl-x_lo)*0.05, wl_y_ds+dam_top*0.025,
-                f'WL_DS={res["wl_ds"]:.2f} m  h={h_ds_full:.2f} m',
-                fontsize=8, color='#1a3399', zorder=6)
+        ax.text(x_lo + (x_face_wl - x_lo) * 0.05, wl_y_ds + dam_top * 0.025,
+                f'WL_DS={res["wl_ds"]:.2f} m  h={h_ds_full:.2f} m', fontsize=8, color='#1a3399', zorder=6)
 
+    # ── Silt label line (at silt top, from silt outer edge to dam face) ───────
     if silt.include and silt.height_us > 0:
         y_silt = heel_y + silt.height_us
         if y_silt <= dam_top + 1e-6:
             x_sf = x_on_face_at_y(geom.us_face, y_silt)
-            ax.plot([x_sf, x_hi], [y_silt, y_silt], color='saddlebrown', lw=1.3, ls=':', zorder=4)
-            ax.text(x_sf+0.05*(x_hi-x_sf), y_silt+dam_top*0.02,
+            ax.plot([us_water_outer + silt_max_w, x_sf], [y_silt, y_silt],
+                    color='saddlebrown', lw=0.9, ls=':', zorder=4)
+            ax.text(us_water_outer + silt_max_w * 0.5, y_silt + dam_top * 0.02,
                     f'Silt h={silt.height_us:.2f} m', fontsize=8,
-                    color='saddlebrown', fontstyle='italic', zorder=6)
-    
-    # Pressure diagrams
+                    color='saddlebrown', fontstyle='italic', ha='center', zorder=6)
+
+    # ── US water pressure polygon ─────────────────────────────────────────────
     def draw_pressure_diagram(h_act, h_ot, base_y, face_x, side, color):
         if h_act < 1e-9: return
         sign   = +1.0 if side == 'us' else -1.0
@@ -1005,295 +1037,337 @@ def plot_to_base64(res, geom, mat, drainage, silt):
         p_base = gw * (h_ot + h_act)
         y_top  = base_y + h_act
         w_base = sign * p2w(p_base); w_top = sign * p2w(p_top)
-        ax.fill([face_x, face_x+w_base, face_x+w_top, face_x],
+        ax.fill([face_x, face_x + w_base, face_x + w_top, face_x],
                 [base_y, base_y, y_top, y_top], color=color, alpha=0.22, zorder=2)
-        ax.plot([face_x+w_base, face_x+w_top], [base_y, y_top], color=color, lw=1.3, zorder=3)
+        ax.plot([face_x + w_base, face_x + w_top], [base_y, y_top], color=color, lw=1.3, zorder=3)
         ax.plot([face_x, face_x], [base_y, y_top], color=color, lw=1.0, zorder=3)
         for k in range(9):
-            frac = k / 8; yv = base_y + frac*h_act
-            pv = gw*((h_ot+h_act) - frac*h_act); wv = sign*p2w(pv)
+            frac = k / 8; yv = base_y + frac * h_act
+            pv = gw * ((h_ot + h_act) - frac * h_act); wv = sign * p2w(pv)
             if abs(wv) > 1e-4:
-                ax.annotate('', xy=(face_x, yv), xytext=(face_x+wv, yv),
+                ax.annotate('', xy=(face_x, yv), xytext=(face_x + wv, yv),
                             arrowprops=dict(arrowstyle='->', color=color, lw=0.9, mutation_scale=8), zorder=4)
-        F, y_bar = _trap_pressure_resultant(gw, h_act, h_ot)
-        # No resultant arrow for water/downstream pressure — pressure diagram only
+        # No resultant arrow — pressure diagram only
 
     if h_us_act > 0:
-        draw_pressure_diagram(h_us_act, max(h_us_full-(dam_top-heel_y),0.0),
+        draw_pressure_diagram(h_us_act, max(h_us_full - (dam_top - heel_y), 0.0),
                               heel_y, heel_x, 'us', 'red')
     if h_ds_act > 0:
-        draw_pressure_diagram(h_ds_act, max(h_ds_full-(dam_top-toe_y),0.0),
+        draw_pressure_diagram(h_ds_act, max(h_ds_full - (dam_top - toe_y), 0.0),
                               toe_y, 0.0, 'ds', 'green')
 
-    # Uplift
+    # ── Silt pressure polygon (starts at us_water_outer, extends upstream) ────
+    if silt.include and silt.height_us > 0:
+        n_s     = 30
+        ys_s    = np.linspace(heel_y, heel_y + silt.height_us, n_s)
+        p_s_arr = gw * Ka_silt * (silt.height_us - (ys_s - heel_y))
+        w_s_arr = np.array([p2w(p) for p in p_s_arr])
+        # Right edge: vertical at us_water_outer; left edge: us_water_outer + width (upstream)
+        sx_right = np.full(n_s, us_water_outer)
+        sx_left  = us_water_outer + w_s_arr
+        poly_x   = np.concatenate([sx_right, sx_left[::-1]])
+        poly_y   = np.concatenate([ys_s, ys_s[::-1]])
+        ax.fill(poly_x, poly_y, color='saddlebrown', alpha=0.35, zorder=5)
+        ax.plot(sx_left, ys_s, color='#5d4037', lw=1.3, zorder=5)
+        ax.plot([us_water_outer, us_water_outer], [heel_y, heel_y + silt.height_us],
+                color='#5d4037', lw=1.0, ls='--', zorder=4)
+        for i in range(0, n_s, 5):
+            if w_s_arr[i] > 1e-4:
+                ax.annotate('', xy=(us_water_outer, ys_s[i]), xytext=(sx_left[i], ys_s[i]),
+                            arrowprops=dict(arrowstyle='->', color='#5d4037', lw=0.9, mutation_scale=7), zorder=5)
+        # Silt weight resultant arrow
+        sw_f = next((f for f in res['forces'] if f['name'] == 'Silt Weight'), None)
+        if sw_f:
+            ln = f2l(sw_f['V'])
+            ax.annotate('', xy=(sw_f['x_from_toe'], sw_f['y_from_toe']),
+                        xytext=(sw_f['x_from_toe'], sw_f['y_from_toe'] + ln),
+                        arrowprops=dict(arrowstyle='->', color='saddlebrown', lw=2.5, mutation_scale=14), zorder=7)
+            ax.text(sw_f['x_from_toe'] + 0.15, sw_f['y_from_toe'] + ln * 0.5,
+                    'W_silt', fontsize=7.5, color='saddlebrown', va='center',
+                    bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
+
+    # ── Backfill pressure polygon (starts at ds_water_outer, extends downstream) ──
+    if bf_forces:
+        # Find height from forces
+        bf_h = max((f['y_from_toe'] * 3 for f in bf_forces), default=0.0)  # approx
+        # Use the backfill config directly from silt param isn't available — build from forces
+        # Reconstruct polygon from force data isn't possible; draw from y=0 to max height
+        # Get backfill height from the highest bf force y-arm
+        bf_h_act = 0.0
+        for f in bf_forces: bf_h_act = max(bf_h_act, f['y_from_toe'] * 3)  # y_from_toe = h/3
+        # We can't access backfill config here directly, reconstruct from force magnitude
+    # ── Backfill pressure polygon (starts at ds_water_outer, extends downstream) ──
+    if backfill is not None and backfill.include_pressure and backfill.height > 0:
+        Ka_bf    = backfill.coeff_pressure
+        n_bf     = 25
+        ys_bf    = np.linspace(toe_y, toe_y + backfill.height, n_bf)
+        p_bf_arr = Ka_bf * backfill.unit_weight_dry * (backfill.height - (ys_bf - toe_y))
+        w_bf_arr = np.array([p2w(p) for p in p_bf_arr])
+        # Right edge: vertical at ds_water_outer (outer edge of DS water pressure)
+        # Left edge:  ds_water_outer - width (further downstream = more negative x)
+        bx_right = np.full(n_bf, ds_water_outer)
+        bx_left  = ds_water_outer - w_bf_arr
+        poly_x   = np.concatenate([bx_right, bx_left[::-1]])
+        poly_y   = np.concatenate([ys_bf,    ys_bf[::-1]])
+        ax.fill(poly_x, poly_y, color='#78909c', alpha=0.35, zorder=2)
+        ax.plot(bx_left, ys_bf, color='#37474f', lw=1.3, zorder=3)
+        ax.plot([ds_water_outer, ds_water_outer], [toe_y, toe_y + backfill.height],
+                color='#37474f', lw=1.0, ls='--', zorder=3)
+        for i in range(0, n_bf, 5):
+            if w_bf_arr[i] > 1e-4:
+                ax.annotate('', xy=(ds_water_outer, ys_bf[i]),
+                            xytext=(bx_left[i], ys_bf[i]),
+                            arrowprops=dict(arrowstyle='->', color='#37474f',
+                                            lw=0.9, mutation_scale=7), zorder=4)
+        ax.text(ds_water_outer - w_bf_arr[0] * 0.5, toe_y + backfill.height + dam_top * 0.02,
+                'BF press', fontsize=7.5, color='#37474f', fontstyle='italic',
+                ha='center', zorder=6)
+
+    # ── Uplift pressure polygon ───────────────────────────────────────────────
     Lt     = min(res['tension_length'], L)
     up_pts = build_uplift_pressure_polygon(L, h_us_u, h_ds_u, drainage, Lt)
-    up_xs  = [x for x,_ in up_pts]
-    up_pws = [p2w(gw*h) for _,h in up_pts]
+    up_xs  = [x for x, _ in up_pts]
+    up_pws = [p2w(gw * h) for _, h in up_pts]
     ref_y  = y_base_ref
-    # ─────────────────────────────────────────────
-    # CORRECT UPLIFT POLYGON PLOTTING
-    # (preserves tension plateau and drainage kink)
-    # ─────────────────────────────────────────────
-
-    poly_xu = []
-    poly_yu = []
-
-    # Bottom edge: reference line (toe → heel)
-    for x, _ in up_pts:
-        poly_xu.append(x)
-        poly_yu.append(ref_y)
-
-    # Top edge: uplift curve (heel → toe)
-    for x, h in reversed(up_pts):
-        poly_xu.append(x)
-        poly_yu.append(ref_y - p2w(gw * h))
-
-    ax.fill(
-        poly_xu,
-        poly_yu,
-        color='orange',
-        alpha=0.25,
-        zorder=2
-    )
-    ax.plot(up_xs, [ref_y-pw for pw in up_pws], color='darkorange', lw=1.5, zorder=3)
+    poly_xu = [x for x, _ in up_pts] + [x for x, _ in reversed(up_pts)]
+    poly_yu = [ref_y] * len(up_pts)  + [ref_y - p2w(gw * h) for _, h in reversed(up_pts)]
+    ax.fill(poly_xu, poly_yu, color='orange', alpha=0.25, zorder=2)
+    ax.plot(up_xs, [ref_y - pw for pw in up_pws], color='darkorange', lw=1.5, zorder=3)
     for xv in np.linspace(0.0, L, 10):
-        pw = np.interp(xv, up_xs, up_pws)
+        pw = float(np.interp(xv, up_xs, up_pws))
         if pw > 1e-4:
-            ax.annotate('', xy=(xv, ref_y), xytext=(xv, ref_y-pw),
+            ax.annotate('', xy=(xv, ref_y), xytext=(xv, ref_y - pw),
                         arrowprops=dict(arrowstyle='->', color='darkorange', lw=0.9, mutation_scale=8), zorder=4)
-    # No resultant arrow for uplift — pressure diagram only
 
-    # ── Westergaard hydrodynamic pressure (EQ load cases) ───────────────────
-    # Drawn as parabolic strip to the LEFT of the water pressure outer edge.
-    # The right boundary of the strip is a vertical line at the outermost x of
-    # the upstream water pressure triangle (x_anchor). The left boundary is
-    # the parabolic Westergaard curve.
-    eq_forces = [f for f in res['forces'] if 'Westergaard' in f['name']]
-    if eq_forces and h_us_act > 0:
-        g_val   = 9.81
-        eq_cfg  = res.get('earthquake')
-        if eq_cfg is not None:
-            ah_g = eq_cfg.a_h / g_val
-            # Upstream face angle from vertical → cos²θ correction
-            us_face_sorted = sorted(geom.us_face, key=lambda p: p[1])
-            if len(us_face_sorted) >= 2:
-                dx_f = us_face_sorted[-1][0] - us_face_sorted[0][0]
-                dy_f = us_face_sorted[-1][1] - us_face_sorted[0][1]
-                theta_f = math.atan2(abs(dx_f), abs(dy_f)) if abs(dy_f) > 1e-9 else math.pi/2
-            else:
-                theta_f = 0.0
-            cos2_f = math.cos(theta_f)**2
+    # ── Westergaard hydrodynamic pressure ────────────────────────────────────
+    if eq_forces and h_us_act > 0 and eq_cfg is not None:
+        n_pts  = 60
+        depths = np.linspace(0, h_us_act, n_pts)
+        wl_rel = res['wl_us'] - geom.toe_elevation
+        y_rel_wg   = wl_rel - depths
+        p_wg       = (7/8) * ah_g * gw * np.sqrt(np.maximum(h_us_act * depths, 0)) * cos2_f
+        w_wg       = np.array([p2w(p) for p in p_wg])
+        x_anchor   = wg_anchor
+        wg_outer_x = x_anchor + w_wg
+        right_edge  = np.column_stack([np.full(n_pts, x_anchor), y_rel_wg])
+        left_edge   = np.column_stack([wg_outer_x, y_rel_wg])
+        wg_poly_pts = np.vstack([right_edge, left_edge[::-1]])
+        ax.fill(wg_poly_pts[:, 0], wg_poly_pts[:, 1],
+                color='#7d3c98', alpha=0.30, hatch='////', zorder=5)
+        ax.plot(wg_outer_x, y_rel_wg, color='#5b2c6f', lw=1.4, zorder=6)
+        ax.plot([x_anchor, x_anchor], [y_rel_wg[0], y_rel_wg[-1]],
+                color='#5b2c6f', lw=0.8, ls='--', zorder=5)
+        # Resultant arrow at 0.4H
+        y_arm_wg_rel = geom.upstream_heel[1] + 0.4 * h_us_act
+        d_arm_wg     = res['wl_us'] - (y_arm_wg_rel + geom.toe_elevation)
+        w_wg_arm     = p2w((7/8) * ah_g * gw * math.sqrt(max(h_us_act * d_arm_wg, 0)) * cos2_f)
+        x_wg_outer_arm = x_anchor + w_wg_arm
+        F_hd_val = eq_forces[0]['H']
+        arr_len  = f2l(F_hd_val)
+        ax.annotate('', xy=(x_anchor, y_arm_wg_rel),
+                    xytext=(x_wg_outer_arm + arr_len, y_arm_wg_rel),
+                    arrowprops=dict(arrowstyle='->', color='#5b2c6f', lw=2.5, mutation_scale=15), zorder=8)
+        ax.text(x_wg_outer_arm + arr_len + 0.05, y_arm_wg_rel + dam_top * 0.02,
+                'Hydrodyn', fontsize=7.5, color='#5b2c6f', ha='left', zorder=8)
 
-            H_wg = res['wl_us'] - geom.heel_elevation
-            n_pts = 80
-            depths   = np.linspace(0, H_wg, n_pts)
-            # Use RELATIVE y (0 = toe) to match the face/polygon coordinate system
-            wl_rel   = res['wl_us'] - geom.toe_elevation
-            y_rel_wg = wl_rel - depths   # relative y at each depth
-
-            # x on upstream face at each elevation (face coords are relative)
-            face_xs_wg = np.array([x_on_face_at_y(geom.us_face, y) for y in y_rel_wg])
-
-            # Water pressure outer edge at each depth
-            # In internal coords, upstream = increasing x, so the outer edge
-            # of the water pressure polygon is at face_x + w_water (upstream side)
-            p_water_wg    = gw * depths
-            w_water_wg    = np.array([p2w(p) for p in p_water_wg])
-            outer_water_x = face_xs_wg + w_water_wg   # extends upstream (+x in internal)
-
-            # Anchor x = outermost (most upstream) x of water pressure = value at base
-            x_anchor = float(outer_water_x[-1])
-
-            # Westergaard pressure at each depth — extends further upstream from anchor
-            p_wg       = (7/8) * ah_g * gw * np.sqrt(np.maximum(H_wg * depths, 0)) * cos2_f
-            w_wg       = np.array([p2w(p) for p in p_wg])
-            wg_outer_x = x_anchor + w_wg   # further upstream (+x) from anchor
-
-            # Build Westergaard polygon:
-            # right boundary = vertical line at x_anchor (tip of water pressure polygon)
-            # left boundary  = parabolic curve wg_outer_x
-            # (after ax.invert_xaxis, x_anchor is to the RIGHT of wg_outer_x visually)
-            right_edge  = np.column_stack([np.full(n_pts, x_anchor), y_rel_wg])
-            left_edge   = np.column_stack([wg_outer_x, y_rel_wg])
-            wg_poly_pts = np.vstack([right_edge, left_edge[::-1]])
-
-            EQ_COL = '#6c3483'
-            ax.fill(wg_poly_pts[:,0], wg_poly_pts[:,1],
-                    color=EQ_COL, alpha=0.35, hatch='///', zorder=5,
-                    label='Westergaard (EQ)')
-            ax.plot(wg_outer_x, y_rel_wg, color=EQ_COL, lw=1.4, zorder=6)
-            ax.plot([x_anchor, x_anchor], [y_rel_wg[0], y_rel_wg[-1]],
-                    color=EQ_COL, lw=0.7, ls=':', zorder=5)
-
-            # Resultant arrow at 0.4H: points from outer parabola edge toward x_anchor (downstream)
-            y_arm_wg_rel = geom.upstream_heel[1] + 0.4 * H_wg
-            d_arm_wg     = res['wl_us'] - (y_arm_wg_rel + geom.toe_elevation)
-            w_wg_arm     = p2w((7/8)*ah_g*gw*math.sqrt(max(H_wg*d_arm_wg,0))*cos2_f)
-            x_wg_outer_arm = x_anchor + w_wg_arm   # outer edge of Westergaard at arm elevation
-            F_hd_val = eq_forces[0]['H']
-            arr_len  = f2l(F_hd_val)   # force scale 1/100
-            # Arrow from outer edge (upstream) toward x_anchor (downstream direction)
-            ax.annotate('', xy=(x_anchor, y_arm_wg_rel),
-                        xytext=(x_wg_outer_arm + arr_len, y_arm_wg_rel),
-                        arrowprops=dict(arrowstyle='->', color=EQ_COL, lw=2.5,
-                                        mutation_scale=15), zorder=8)
-            ax.text(x_wg_outer_arm + arr_len + 0.05, y_arm_wg_rel + dam_top*0.02,
-                    f'F_hd={F_hd_val:.0f} kN/m', fontsize=7.5,
-                    color=EQ_COL, ha='left', zorder=8)
-
-    # ── Inertia arrows (EQ) ──────────────────────────────────────────────────
+    # ── EQ inertia arrows ────────────────────────────────────────────────────
     ih_forces = [f for f in res['forces'] if 'Inertia (horiz' in f['name']]
     iv_forces = [f for f in res['forces'] if 'Inertia (vert'  in f['name']]
-    EQ_COL2 = '#1a5276'   # dark blue for inertia (distinct from Westergaard purple)
-    # Maximum allowed arrow lengths so they stay within the axes bounds.
-    # Horizontal: arrow goes toward toe (decreasing x); cap at centroid x minus a small margin.
-    # Vertical:   arrow goes upward; cap at remaining dam height above centroid.
+    EQ_COL2   = '#1a5276'
     for f in ih_forces:
         cx_f, cy_f = f['x_from_toe'], f['y_from_toe']
-        ln = min(f2l(f['H']), cx_f - 0.3)   # clamp so head stays inside axes (x > 0)
-        ln = max(ln, 0.3)                     # always show at least a small arrow
+        ln = min(f2l(f['H']), cx_f - 0.3); ln = max(ln, 0.3)
         ax.annotate('', xy=(cx_f - ln, cy_f), xytext=(cx_f, cy_f),
-                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5,
-                                    mutation_scale=15), zorder=7)
+                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5, mutation_scale=15), zorder=7)
+        ax.text(cx_f - ln * 0.5, cy_f - dam_top * 0.04, 'F_ih',
+                fontsize=7.5, color=EQ_COL2, ha='center',
+                bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
     for f in iv_forces:
         cx_f, cy_f = f['x_from_toe'], f['y_from_toe']
-        ln = min(f2l(abs(f['V'])), dam_top - cy_f - 0.2)   # clamp to fit above centroid
-        ln = max(ln, 0.3)
+        ln = min(f2l(abs(f['V'])), dam_top - cy_f - 0.2); ln = max(ln, 0.3)
         ax.annotate('', xy=(cx_f, cy_f + ln), xytext=(cx_f, cy_f),
-                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5,
-                                    mutation_scale=15), zorder=7)
+                    arrowprops=dict(arrowstyle='->', color=EQ_COL2, lw=2.5, mutation_scale=15), zorder=7)
+        ax.text(cx_f + 0.15, cy_f + ln * 0.5, 'F_iv',
+                fontsize=7.5, color=EQ_COL2, va='center',
+                bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
 
-    # ── Force resultant arrows ────────────────────────────────────────────────
-    # NO arrow: Dam Weight, Water Pressure US/DS (handled by pressure diagram),
-    #           Uplift (handled by pressure diagram), EQ inertia/hydro (drawn above)
-    # YES arrow (f2l = 1/10 scale): all other forces
+    # ── Dam body (drawn over pressure polygons) ───────────────────────────────
+    xs = [p[0] for p in geom.coordinates] + [geom.coordinates[0][0]]
+    ys = [p[1] for p in geom.coordinates] + [geom.coordinates[0][1]]
+    ax.fill(xs, ys, color='lightgray', ec='black', lw=1.5, zorder=3)
+
+    # ── Rock bolt ─────────────────────────────────────────────────────────────
+    # Cap plate just ABOVE the base; dashed line extends DOWNWARD = f2l(force).
+    # Downward arrow at midpoint. No connection to dam face.
+    RB_COL = '#b5451b'
+    if rb_f:
+        rbX      = rb_f['x_from_toe']
+        rb_ln    = f2l(rb_f['V'])          # line length below base (1/10 scale)
+        # Base elevation at rbX: interpolate on the inclined base segment
+        # Base runs from downstream toe (0, toe_y) to upstream heel (heel_x, heel_y)
+        rb_base_y = toe_y + (heel_y - toe_y) * (rbX / heel_x) if heel_x > 1e-9 else y_base_ref
+        rb_bot   = rb_base_y - rb_ln
+        cap_half = 0.25
+        cap_top  = rb_base_y + cap_half * 0.6
+        # Cap plate above base
+        ax.fill([rbX - cap_half, rbX + cap_half, rbX + cap_half, rbX - cap_half],
+                [rb_base_y, rb_base_y, cap_top, cap_top], color=RB_COL, zorder=6)
+        # Dashed line from base downward
+        ax.plot([rbX, rbX], [rb_base_y, rb_bot], color=RB_COL, lw=2.2, ls='--', zorder=5)
+        # Downward arrow at midpoint
+        rb_mid = (rb_base_y + rb_bot) * 0.5
+        ax.annotate('', xy=(rbX, rb_mid - 0.3), xytext=(rbX, rb_mid + 0.3),
+                    arrowprops=dict(arrowstyle='->', color=RB_COL, lw=2.2, mutation_scale=13), zorder=6)
+        ax.text(rbX + 0.15, rb_mid, 'RB', fontsize=7.5, color=RB_COL, va='center',
+                bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
+
+    # ── Rock anchor ───────────────────────────────────────────────────────────
+    # Find highest intersection of x=raX with dam polygon (US or DS face).
+    # Cap at top, dashed line to 5 m below base, downward arrow at midpoint.
+    RA_COL = '#880e4f'
+    if ra_f:
+        raX  = ra_f['x_from_toe']
+        # Find highest y on dam polygon at this x
+        def dam_top_y_at_x(x_int):
+            pts  = [(p[0], p[1]) for p in geom.coordinates]
+            n    = len(pts); best = None
+            for i in range(n):
+                x1, y1 = pts[i]; x2, y2 = pts[(i + 1) % n]
+                if min(x1, x2) - 1e-9 <= x_int <= max(x1, x2) + 1e-9:
+                    y = y1 + (x_int - x1) / (x2 - x1) * (y2 - y1) if abs(x2 - x1) > 1e-9 else (y1 + y2) / 2
+                    if best is None or y > best: best = y
+            return best
+
+        ra_top = dam_top_y_at_x(raX)
+        if ra_top is None: ra_top = ref_y
+        # Base elevation at raX: interpolate on inclined base segment
+        ra_base_y = toe_y + (heel_y - toe_y) * (raX / heel_x) if heel_x > 1e-9 else y_base_ref
+        ra_bot = ra_base_y - anchor_ext
+        cap_half = 0.3
+        # Cap plate at top
+        ax.fill([raX - cap_half, raX + cap_half, raX + cap_half, raX - cap_half],
+                [ra_top, ra_top, ra_top + cap_half * 0.6, ra_top + cap_half * 0.6],
+                color=RA_COL, zorder=6)
+        # Dashed line from dam face to 5 m below base
+        ax.plot([raX, raX], [ra_top, ra_bot], color=RA_COL, lw=2.2, ls='--', zorder=5)
+        # Downward arrow at midpoint
+        ra_mid = (ra_top + ra_bot) * 0.5
+        ax.annotate('', xy=(raX, ra_mid - 0.3), xytext=(raX, ra_mid + 0.3),
+                    arrowprops=dict(arrowstyle='->', color=RA_COL, lw=2.2, mutation_scale=13), zorder=6)
+        ax.text(raX + 0.15, ra_mid, 'RA', fontsize=7.5, color=RA_COL, va='center',
+                bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
+
+    # ── Generic force arrows ──────────────────────────────────────────────────
     NO_ARROW = {
         'Dam Weight',
         'Water Pressure US (tri)', 'Water Pressure US (trap)',
         'Water Pressure DS (tri)', 'Water Pressure DS (trap)',
         'Uplift',
+        'Silt Pressure (horiz)',           # drawn as polygon above
+        'Silt Weight',                     # drawn separately above
+        'Backfill Pressure (dry)', 'Backfill Pressure (sub)',
+        'Rock Bolt', 'Rock Anchor',        # drawn separately above
         'Inertia (horiz, EQ)', 'Inertia (vert, EQ)',
         'Hydrodynamic (Westergaard, EQ)',
     }
-    # Colour map for specific force types
     FORCE_COLORS = {
-        'Ice Pressure':          '#1a6bcc',
-        'Water Weight (US)':     '#2471a3',
-        'Water Weight (DS)':     '#2471a3',
-        'Silt Pressure (horiz)': 'saddlebrown',
-        'Silt Weight':           'saddlebrown',
-        'Rock Bolt':             '#b5451b',
-        'Rock Anchor':           '#b5451b',
+        'Ice Pressure':      '#1a6bcc',
+        'Water Weight (US)': '#1565c0',
+        'Water Weight (DS)': '#1565c0',
+        'Backfill Weight':   '#37474f',
     }
-
-    # Short display labels for force arrows
+    SHORT = {
+        'Water Weight (US)':         'W_w',
+        'Water Weight (DS)':         'W_w(DS)',
+        'Ice Pressure':              'Ice',
+        'Backfill Weight':           'W_BF',
+        'Backfill Pressure (dry)':   'BF',
+        'Backfill Pressure (sub)':   'BF(sub)',
+    }
     def short_label(name):
-        m = {'Water Weight (US)': 'W_w',
-             'Water Weight (DS)': 'W_w(DS)',
-             'Ice Pressure':      'Ice',
-             'Silt Pressure (horiz)': 'Silt',
-             'Silt Weight':       'W_silt',
-             'Backfill Pressure (dry)': 'BF',
-             'Backfill Pressure (sub)': 'BF(sub)',
-             'Backfill Weight':   'W_BF',
-             'Rock Bolt':         'RB',
-             'Rock Anchor':       'RA',
-        }
-        if name in m: return m[name]
+        if name in SHORT: return SHORT[name]
         if name.startswith('Applied V'): return f'P_v{name[-1]}'
         if name.startswith('Applied H'): return f'P_h{name[-1]}'
-        return name.split('(')[0].strip()[:6]
+        return name.split('(')[0].strip()[:8]
 
     for f in res['forces']:
         if f['name'] in NO_ARROW: continue
-        # Backfill, Applied, Water Weight, Ice, Rock Bolt/Anchor, Silt
-        color = FORCE_COLORS.get(f['name'],
-                'green' if f['stabilising'] else 'red')
-        x, y  = f['x_from_toe'], f['y_from_toe']
-        lbl   = short_label(f['name'])
-        ap    = dict(arrowstyle='->', color=color, lw=2.5, mutation_scale=16)
-        txt   = dict(fontsize=7, color=color, zorder=7,
-                     bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7))
+        col  = FORCE_COLORS.get(f['name'], 'green' if f['stabilising'] else 'red')
+        x, y = f['x_from_toe'], f['y_from_toe']
+        lbl  = short_label(f['name'])
+        ap   = dict(arrowstyle='->', color=col, lw=2.5, mutation_scale=16)
+        txt  = dict(fontsize=7.5, color=col, va='center',
+                    bbox=dict(facecolor='white', edgecolor='none', pad=1, alpha=0.7), zorder=7)
         if abs(f['V']) > 1e-6:
             ln = f2l(abs(f['V']))
             if f['V'] > 0:
-                ax.annotate('', xy=(x, y), xytext=(x, y+ln), arrowprops=ap, zorder=6)
-                ax.text(x+0.15, y+ln*0.5, lbl, va='center', **txt)
+                ax.annotate('', xy=(x, y), xytext=(x, y + ln), arrowprops=ap, zorder=6)
+                ax.text(x + 0.15, y + ln * 0.5, lbl, **txt)
             else:
-                ax.annotate('', xy=(x, y+ln), xytext=(x, y), arrowprops=ap, zorder=6)
-                ax.text(x+0.15, y+ln*0.5, lbl, va='center', **txt)
+                ax.annotate('', xy=(x, y + ln), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x + 0.15, y + ln * 0.5, lbl, **txt)
         if abs(f['H']) > 1e-6:
             ln = f2l(abs(f['H']))
             if 'Ice' in f['name']:
-                ax.annotate('', xy=(heel_x, y), xytext=(heel_x+ln, y),
-                            arrowprops=ap, zorder=6)
-                ax.text(heel_x+ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
+                ax.annotate('', xy=(heel_x, y), xytext=(heel_x + ln, y), arrowprops=ap, zorder=6)
+                ax.text(heel_x + ln * 0.5, y + dam_top * 0.025, lbl, ha='center', **txt)
+            elif 'Applied' in f['name'] and f['stabilising']:
+                ax.annotate('', xy=(x + ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x + ln * 0.5, y + dam_top * 0.025, lbl, ha='center', **txt)
             elif not f['stabilising']:
-                ax.annotate('', xy=(x-ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
-                ax.text(x-ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
+                ln = min(ln, x - 0.3); ln = max(ln, 0.3)
+                ax.annotate('', xy=(x - ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
+                ax.text(x - ln * 0.5, y + dam_top * 0.025, lbl, ha='center', **txt)
             else:
-                ax.annotate('', xy=(x+ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
-                ax.text(x+ln*0.5, y+dam_top*0.025, lbl, ha='center', **txt)
+                ax.annotate('', xy=(x + ln, y), xytext=(x, y), arrowprops=ap, zorder=6)
 
-    # Resultant arrow
-    xr  = res['x_resultant']
-    by_r = heel_y * xr / heel_x if heel_x > 1e-9 else 0.0
+    # ── Overall resultant ─────────────────────────────────────────────────────
+    xr   = res['x_resultant']
+    by_r = y_base_ref
     SV, HN = res['sum_V'], res['H_net']
     if abs(SV) > 1e-6 or abs(HN) > 1e-6:
         dx_r = -r2l(HN); dy_r = -r2l(abs(SV))
-        ax.annotate('', xy=(xr, by_r), xytext=(xr-dx_r, by_r-dy_r),
+        ax.annotate('', xy=(xr, by_r), xytext=(xr - dx_r, by_r - dy_r),
                     arrowprops=dict(arrowstyle='->', color='purple', lw=2.5, mutation_scale=14), zorder=8)
 
-    # Middle-third / L6 ticks
+    # Middle-third / L/6 zone markers — short ticks at the base line, label immediately above
     if res.get('resultant_check_type') == "L/6–5L/6":
-        mt1, mt2 = L/6.0, 5.0*L/6.0
+        mt1, mt2 = L / 6.0, 5.0 * L / 6.0
         tl_l, tl_r = "L/6", "5L/6"
     else:
-        mt1, mt2 = L/3.0, 2.0*L/3.0
+        mt1, mt2 = L / 3.0, 2.0 * L / 3.0
         tl_l, tl_r = "L/3", "2L/3"
+    tick_h = dam_top * 0.08   # tick height: 8% of dam height
+    for mx, ml in [(mt1, tl_l), (mt2, tl_r)]:
+        ax.plot([mx, mx], [by_r, by_r + tick_h],
+                color='#7d3c98', lw=1.2, ls='--', alpha=0.8, zorder=5)
+        ax.text(mx, by_r + tick_h + dam_top * 0.01, ml,
+                fontsize=7, color='#7d3c98', ha='center', va='bottom', zorder=6)
 
-    bn = np.hypot(heel_x, heel_y)
-    nx_b = -heel_y/bn if bn > 1e-9 else 0.0
-    ny_b =  heel_x/bn if bn > 1e-9 else 1.0
-    tl   = dam_top * 0.06
-    def base_y_at(xv): return heel_y * xv / heel_x if heel_x > 1e-9 else 0.0
-    for mx, lbl in [(mt1, f"{tl_l}\n{mt1:.2f} m"), (mt2, f"{tl_r}\n{mt2:.2f} m")]:
-        my = base_y_at(mx)
-        ax.plot([mx-nx_b*tl, mx+nx_b*tl], [my-ny_b*tl, my+ny_b*tl], color='goldenrod', lw=2.0, zorder=3)
-        ax.text(mx, my-dam_top*0.08, lbl, fontsize=7, color='goldenrod', ha='center', va='top', zorder=6)
-
+    # ── Axes, labels, title ───────────────────────────────────────────────────
     ax.set_xlim(x_lo, x_hi); ax.set_ylim(y_lo, y_hi)
     ax.invert_xaxis(); ax.set_aspect('equal')
-    elev_offset = geom.toe_elevation
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v,_: f'{v+elev_offset:.0f}'))
+    ax.grid(True, alpha=0.18)
+    ax.yaxis.set_major_formatter(
+        ticker.FuncFormatter(lambda v, _: f'{v + geom.toe_elevation:.0f}'))
     ax.set_ylabel('Elevation (m)', fontsize=10)
-    # Show x-axis tick labels and label (same axis basis as the stress diagram:
-    # horizontal distance measured from the downstream toe).
-    ax.tick_params(labelbottom=True)
     ax.set_xlabel('← UPSTREAM          Distance from downstream toe (m)          DOWNSTREAM →',
                   fontsize=9)
-    ax.grid(True, alpha=0.18)
-    # Place labels in axes-fraction coords (just inside left/right edges) so
-    # the words never clip regardless of data range. After invert_xaxis,
-    # x-fraction 0.0 is the LEFT edge (upstream) and 1.0 is the RIGHT (downstream).
-    ax.text(0.02, 0.97, 'UPSTREAM',   transform=ax.transAxes, fontsize=10,
-            color='#1a3399', ha='left',  va='top', fontweight='bold')
-    ax.text(0.98, 0.97, 'DOWNSTREAM', transform=ax.transAxes, fontsize=10,
-            color='#1a3399', ha='right', va='top', fontweight='bold')
-    ax.set_title(f"Load Case: {'HRV+IS' if res['case_name']=='HRV' else res['case_name']}",
-                 fontsize=11, fontweight='bold', pad=6)
-
-    # Save dam figure
-    # Fixed axes rectangle so the data area has identical pixel width in
-    # both the dam and stress figures (→ identical x-scale).
+    title = 'HRV+IS' if res['case_name'] == 'HRV' else res['case_name']
+    ax.set_title(f'Load Case: {title}', fontsize=11, fontweight='bold', pad=6)
     # NOTE: do NOT call set_xlim(x_lo, x_hi) here — the axis was already
     # inverted above via invert_xaxis(); re-setting xlim with lo<hi would
-    # cancel the inversion and put upstream on the wrong side.
+    # un-invert it. Only the ylim may be updated safely here.
+    ax.text(0.02, 0.97, 'UPSTREAM',   transform=ax.transAxes, fontsize=10,
+            color='#1a3399', ha='left', va='top', fontweight='bold')
+    ax.text(0.98, 0.97, 'DOWNSTREAM', transform=ax.transAxes, fontsize=10,
+            color='#1a3399', ha='right', va='top', fontweight='bold')
+
     LEFT, RIGHT = 0.12, 0.97
     fig.subplots_adjust(left=LEFT, right=RIGHT, top=0.92, bottom=0.10)
+
     buf1 = io.BytesIO()
-    fig.savefig(buf1, format='png', dpi=130)   # NO bbox_inches='tight'
+    fig.savefig(buf1, format='png', dpi=130)
     plt.close(fig)
     buf1.seek(0)
     dam_b64 = base64.b64encode(buf1.read()).decode('utf-8')

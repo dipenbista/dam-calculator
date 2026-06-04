@@ -312,7 +312,7 @@ def calculate(req: LoadCaseRequest):
             )
             res['earthquake'] = eq_for_case   # store for plotting
             # Generate plots (returns {'dam':..., 'stress':...})
-            plot_imgs = plot_to_base64(res, geom, mat, drainage, silt)
+            plot_imgs = plot_to_base64(res, geom, mat, drainage, silt, backfill)
 
             # Serialize forces
             forces_out = [
@@ -530,10 +530,8 @@ def _build_workbook(title: str, blocks: list):
     r_idx = 4
     for blk in blocks:
         for res in blk.results:
-            isStrict = res.case_name in ("HRV", "DFV")
-            fs_ok = res.FS_sliding >= getattr(res, "fs_threshold", 1.5 if isStrict else 1.1)
+            fs_ok  = res.FS_sliding >= res.fs_threshold
             mid_ok = res.in_middle_third
-            sh_ok = res.sigma_heel >= 0
             wc(ws, r_idx, 1, blk.label, bold=True)
             wc(ws, r_idx, 2, dcn(res.case_name), align='center')
 
@@ -544,6 +542,8 @@ def _build_workbook(title: str, blocks: list):
                 cc.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
                 cc.alignment = Alignment(horizontal="center", vertical="center")
                 cc.border = tbord
+                if ok is True:  cc.fill = hfill("C6EFCE")
+                elif ok is False: cc.fill = hfill("FFC7CE")
             fs_cell(3, res.FS_sliding, fs_ok)
             fs_cell(4, res.FS_overturning, True)
 
@@ -551,7 +551,13 @@ def _build_workbook(title: str, blocks: list):
             ck.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
             ck.alignment = Alignment(horizontal="center", vertical="center")
             ck.border = tbord
-            nf(ws, r_idx, 6, res.x_resultant, "0.000")
+            ck.fill = hfill("C6EFCE") if mid_ok else hfill("FFC7CE")
+            xr_cell = ws.cell(row=r_idx, column=6, value=res.x_resultant)
+            xr_cell.number_format = '0.000'
+            xr_cell.font = Font(name=BODY_FONT, size=BODY_SZ)
+            xr_cell.alignment = Alignment(horizontal="center", vertical="center")
+            xr_cell.border = tbord
+            xr_cell.fill = hfill("C6EFCE") if mid_ok else hfill("FFC7CE")
             nf(ws, r_idx, 7, res.eccentricity, '0.000')
             nf(ws, r_idx, 8, res.sigma_toe, '0.0')
             nf(ws, r_idx, 9, res.sigma_heel, '0.0')
@@ -676,7 +682,7 @@ def _build_workbook(title: str, blocks: list):
             ws.row_dimensions[row].height = 16
             row += 1
 
-            fs_thr = getattr(res, "fs_threshold", 1.5 if res.case_name in ("HRV","DFV") else 1.1)
+            fs_thr = res.fs_threshold
             L = res.x_resultant / (1 - res.eccentricity / (res.x_resultant or 1))                 if False else None  # compute L from geometry info stored in block
             # Compute L (base width) from the block context
             blk_L = blk.base_width   # metres
@@ -697,11 +703,11 @@ def _build_workbook(title: str, blocks: list):
                 ("FS Overturning",  res.FS_overturning,  None, '0.000', ""),
                 ("Resultant",       "✓ OK" if res.in_middle_third else "✗ OUTSIDE",
                                      res.in_middle_third, '@', crit_str),
-                ("x_resultant (m)", res.x_resultant,     None, '0.000', x_range_str),
+                ("x_resultant (m)", res.x_resultant,     res.in_middle_third, '0.000', x_range_str),
                 ("Eccentricity (m)",res.eccentricity,    None, '0.000', ""),
-                ("σ_toe (kN/m²)",   res.sigma_toe,       res.sigma_toe >= 0, '0.00', "Compression = positive"),
-                ("σ_heel (kN/m²)",  res.sigma_heel,      res.sigma_heel >= 0, '0.00', "Compression = positive"),
-                ("Tension len (m)", res.tension_length,  res.tension_length < 0.001, '0.000', ""),
+                ("σ_toe (kN/m²)",   res.sigma_toe,       None, '0.00', "Compression = positive"),
+                ("σ_heel (kN/m²)",  res.sigma_heel,      None, '0.00', "Compression = positive"),
+                ("Tension len (m)", res.tension_length,  None, '0.000', ""),
             ]
             for (lbl, val, ok, fmt, note) in items:
                 wc(ws, row, 1, lbl, bold=True)
@@ -712,11 +718,17 @@ def _build_workbook(title: str, blocks: list):
                 cc.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
                 cc.alignment = Alignment(horizontal="center", vertical="center")
                 cc.border = tbord
+                if ok is True:  cc.fill = hfill("C6EFCE")
+                elif ok is False: cc.fill = hfill("FFC7CE")
                 # Status column
                 if ok is None:
                     wc(ws, row, 3, "—", align='center')
                 else:
-                    wc(ws, row, 3, status_txt(ok), align='center', bold=True)
+                    st_cell = ws.cell(row=row, column=3, value=status_txt(ok))
+                    st_cell.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
+                    st_cell.alignment = Alignment(horizontal="center", vertical="center")
+                    st_cell.border = tbord
+                    st_cell.fill = hfill("C6EFCE") if ok else hfill("FFC7CE")
                 # Note column
                 wc(ws, row, 4, note, wrap=True, sz=BODY_SZ-1)
                 ws.row_dimensions[row].height = 14
@@ -726,7 +738,7 @@ def _build_workbook(title: str, blocks: list):
             # ── Diagram placement ─────────────────────────────────────
             # Place dam figure below the FS table.
             dam_b64    = getattr(res, "plot_dam_base64", "") or ""
-            target_w   = 300      # px — fits A4 portrait width
+            target_w   = 500      # px — larger figure for readability
 
             dam_rows = 0
             im = None
@@ -749,9 +761,7 @@ def _build_workbook(title: str, blocks: list):
 
 class SectionInput(BaseModel):
     label:     str
-    us_toe_x:  float
     us_toe_y:  float
-    ds_toe_x:  float
     ds_toe_y:  float
     hrv_ds_wl: float
     dfv_ds_wl: float
@@ -782,7 +792,8 @@ def _safe(v):
 def _solve_case(case_name, geom, mat, wl_us, wl_ds,
                 drainage, silt, backfill, ice_pressure, ice_on,
                 rock_bolt, rock_anchor, applied, incl_rb,
-                rb_depth_limit_apply=True, rb_depth_limit=7.0):
+                rb_depth_limit_apply=True, rb_depth_limit=7.0,
+                earthquake=None):
     """Run one load case and return a fully-populated CaseResult."""
     ice_case = IcePressureConfig(include=(ice_on and case_name == 'HRV'),
                                  pressure=ice_pressure)
@@ -794,8 +805,10 @@ def _solve_case(case_name, geom, mat, wl_us, wl_ds,
         applied=applied, include_rock_bolts=incl_rb,
         rb_depth_limit_apply=rb_depth_limit_apply,
         rb_depth_limit=rb_depth_limit,
+        earthquake=earthquake if earthquake is not None else EarthquakeConfig(include=False),
     )
-    imgs = plot_to_base64(res, geom, mat, drainage, silt)
+    res['earthquake'] = earthquake   # store for plotting
+    imgs = plot_to_base64(res, geom, mat, drainage, silt, backfill)
     forces_out = [
         ForceRow(name=r['name'], V=round(r['V'],3), H=round(r['H'],3),
                  x_from_toe=round(r['x_from_toe'],4), y_from_toe=round(r['y_from_toe'],4),
@@ -810,6 +823,7 @@ def _solve_case(case_name, geom, mat, wl_us, wl_ds,
         x_resultant=_safe(res['x_resultant']), eccentricity=_safe(res['eccentricity']),
         in_middle_third=res['in_middle_third'],
         resultant_check_type=res['resultant_check_type'],
+        fs_threshold=res.get('fs_threshold', 1.5),
         sigma_toe=_safe(res['sigma_toe']), sigma_heel=_safe(res['sigma_heel']),
         FS_sliding=_safe(res['FS_sliding']), FS_overturning=_safe(res['FS_overturning']),
         tension_length=_safe(res['tension_length']),
@@ -842,6 +856,7 @@ def _run_section(req: LoadCaseRequest, sec: SectionInput) -> SectionResponse:
     toe_pt  = min(ds_pts, key=lambda p: p[1])
 
     heel_idx, toe_idx = nidx(heel_pt), nidx(toe_pt)
+    utp_idx = nidx(utp_orig)
     top_y = max(y for _, y in orig_coords)
     crest_pts = [(x, y) for x, y in orig_coords if abs(y-top_y) < 1e-6]
     ds_crest = min(crest_pts, key=lambda p: abs(p[0]-toe_pt[0]))
@@ -942,12 +957,27 @@ def _run_section(req: LoadCaseRequest, sec: SectionInput) -> SectionResponse:
     if req.run_MFV: cases.append(('MFV', req.MFV_us, sec.mfv_ds_wl, True))
     if req.run_DFV_no_bolts:
         cases.append(('DFV (no rock bolts)', req.DFV_us, sec.dfv_ds_wl, False))
+    if req.run_EQ and (req.eq_a_h > 0 or req.eq_a_v > 0):
+        cases.append(('HRV+EQ (X-dom)', req.HRV_us, sec.hrv_ds_wl, True))
+        cases.append(('HRV+EQ (Y-dom)', req.HRV_us, sec.hrv_ds_wl, True))
+
+    # Build earthquake configs — same Eurocode 8 combination rule as main calculate()
+    base_eq = EarthquakeConfig(include=req.run_EQ, a_h=req.eq_a_h, a_v=req.eq_a_v)
+
+    def eq_for(case_name):
+        if case_name == 'HRV+EQ (X-dom)' and base_eq.include:
+            return EarthquakeConfig(include=True, a_h=base_eq.a_h, a_v=0.3*base_eq.a_v)
+        elif case_name == 'HRV+EQ (Y-dom)' and base_eq.include:
+            return EarthquakeConfig(include=True, a_h=0.3*base_eq.a_h, a_v=base_eq.a_v)
+        else:
+            return EarthquakeConfig(include=False)
 
     results_out = [
         _solve_case(cn, geom, mat, wl_us, wl_ds,
                     drainage, silt, backfill, req.ice_pressure, req.ice_include,
                     rock_bolt, rock_anchor, applied, incl,
-                    req.rock_bolt_apply_depth_limit, req.rock_bolt_depth_limit)
+                    req.rock_bolt_apply_depth_limit, req.rock_bolt_depth_limit,
+                    earthquake=eq_for(cn))
         for cn, wl_us, wl_ds, incl in cases
     ]
     return SectionResponse(
