@@ -318,16 +318,9 @@
     <div class="card-body">
       <label>Coordinates (one "x, y" per line — list vertices in order around the dam outline)</label>
       <textarea id="coords" rows="12">0, 100
-0, 101
-2, 101
-4, 106
-5, 108
-5, 109
-5.4, 109
-5.4, 108
-7, 108
-8, 107
-12, 100</textarea>
+0, 110
+2, 110
+10, 100</textarea>
       <p style="font-size:0.75rem;color:#666;margin-top:8px;line-height:1.5">
         <b>Upstream top point (UTP)</b> — the polygon vertex where the dam crest
         meets the upstream face. The calculator uses this to identify the heel and
@@ -337,12 +330,12 @@
       <div class="row2" style="margin-top:6px">
         <div>
           <label>Upstream top point X</label>
-          <input type="number" id="utp_x" value="5" step="0.1"
+          <input type="number" id="utp_x" value="0" step="0.1"
                  oninput="onUTPChange()" style="border:2px solid #ccc">
         </div>
         <div>
           <label>Upstream top point Y</label>
-          <input type="number" id="utp_y" value="109" step="0.1"
+          <input type="number" id="utp_y" value="110" step="0.1"
                  oninput="onUTPChange()" style="border:2px solid #ccc">
         </div>
       </div>
@@ -369,17 +362,17 @@
     <div class="card-body">
       <label>HRV+IS — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="108" step="0.1" placeholder="US">
+        <input type="number" id="HRV_us" value="109" step="0.1" placeholder="US">
         <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="109" step="0.1" placeholder="US">
+        <input type="number" id="DFV_us" value="110" step="0.1" placeholder="US">
         <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="111" step="0.1" placeholder="US">
+        <input type="number" id="MFV_us" value="112" step="0.1" placeholder="US">
         <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
       </div>
     </div>
@@ -392,7 +385,7 @@
     </div>
     <div class="card-body">
       <label>Unit weight of dam (kN/m³)</label>
-      <input type="number" id="uw_dam"   value="24"  step="0.1">
+      <input type="number" id="uw_dam"   value="23"  step="0.1">
       <label>Unit weight of water (kN/m³)</label>
       <input type="number" id="uw_water" value="10"  step="0.1">
       <label>Friction coefficient (μ)</label>
@@ -758,7 +751,19 @@
       Download Results as Excel
     </button>
 
-    <!-- Geometry info bar -->
+    <!-- Detailed calculation button -->
+    <button class="btn-download" id="detail-btn" onclick="openDetailedCalc()" disabled
+            style="background:#1a5276;margin-left:8px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/>
+        <polyline points="10 9 9 9 8 9"/>
+      </svg>
+      Detailed Calculation
+    </button>
     <div id="geom-bar" style="display:flex; margin-bottom:14px;">
       <span>Toe elev: <b id="gb-toe"></b> m</span>
       <span>Heel elev: <b id="gb-heel"></b> m</span>
@@ -1101,7 +1106,40 @@ async function downloadExcelMH() {
 let lastResponseData   = null;
 let lastRequestPayload = null;
 
-// ── Download Excel ───────────────────────────────────────
+// ── Detailed Calculation Viewer ──────────────────────────────
+async function openDetailedCalc() {
+  if (!lastResponseData || !lastRequestPayload) return;
+  const btn = document.getElementById('detail-btn');
+  btn.disabled = true; btn.textContent = '⏳ Generating…';
+  try {
+    const resp = await fetch('/detailed_calc', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({
+        request_payload: lastRequestPayload,
+        results:         lastResponseData.results,
+        geometry:        lastResponseData.geometry,
+      }),
+    });
+    if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail); }
+    const html = await resp.text();
+    const win  = window.open('', '_blank');
+    win.document.write(html);
+    win.document.close();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+      stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/>
+      <line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/>
+      <polyline points="10 9 9 9 8 9"/>
+    </svg> Detailed Calculation`;
+  }
+}
 async function downloadExcel() {
   if (!lastResponseData) return;
   const btn = document.getElementById('dl-btn');
@@ -1793,7 +1831,8 @@ async function runCalc() {
     renderResults(data);
     lastResponseData    = data;
     lastRequestPayload  = payload;   // store for multi-height reuse
-    document.getElementById('dl-btn').disabled = false;
+    document.getElementById('dl-btn').disabled     = false;
+    document.getElementById('detail-btn').disabled = false;
     // Show multi-height section after first successful calculation
     document.getElementById('multi-height-section').style.display = 'block';
 
