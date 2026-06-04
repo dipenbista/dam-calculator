@@ -380,6 +380,7 @@ class ExportRequest(BaseModel):
     """Same calculation response data sent back from the frontend for export."""
     geometry: GeometryInfo
     results:  List[CaseResult]
+    params:   dict = {}   # input parameters for the cover block
 
 
 @app.post("/export")
@@ -400,6 +401,7 @@ def export_excel(data: ExportRequest):
                 dam_height=data.geometry.dam_height,
                 results=data.results,
             )],
+            params=data.params,
         )
         buf = io.BytesIO(); wb.save(buf); buf.seek(0)
         return StreamingResponse(
@@ -430,7 +432,7 @@ class _HeightBlock:
     results:        list   # list of CaseResult-like objects
 
 
-def _build_workbook(title: str, blocks: list):
+def _build_workbook(title: str, blocks: list, params: dict = {}):
     """
     Construct the workbook for printing as an A4-portrait report attachment.
 
@@ -516,18 +518,91 @@ def _build_workbook(title: str, blocks: list):
     t.alignment = Alignment(horizontal="center", vertical="center")
     ws.row_dimensions[1].height = 26
 
+    # ── Input parameters block ────────────────────────────────────────
+    row_p = 2   # start row for params
+    if params:
+        def psec(ws, r, heading):
+            ws.merge_cells(f"A{r}:{LAST_COL}{r}")
+            c = ws[f"A{r}"]
+            c.value = heading
+            c.font  = Font(bold=True, size=BODY_SZ, name=BODY_FONT)
+            c.fill  = hfill(HEADER_FILL)
+            c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+            ws.row_dimensions[r].height = 14
+            return r + 1
+
+        def prow(ws, r, label, value, unit=''):
+            ws.cell(row=r, column=1, value=label).font = Font(name=BODY_FONT, size=BODY_SZ)
+            ws.cell(row=r, column=1).alignment = Alignment(horizontal="left", indent=2)
+            val_str = f"{value}  {unit}".strip() if unit else str(value)
+            ws.cell(row=r, column=2, value=val_str).font = Font(name=BODY_FONT, size=BODY_SZ, bold=True)
+            ws.row_dimensions[r].height = 13
+            return r + 1
+
+        g  = params.get
+        r  = row_p
+        r  = psec(ws, r, "Geometry")
+        r  = prow(ws, r, "Toe elevation",   g('toe_elevation','—'),    'm')
+        r  = prow(ws, r, "Heel elevation",  g('heel_elevation','—'),   'm')
+        r  = prow(ws, r, "Base length",     g('base_length','—'),      'm')
+        r  = prow(ws, r, "Dam height",      g('dam_height','—'),       'm')
+        r  = psec(ws, r, "Material Properties")
+        r  = prow(ws, r, "Unit weight (dam)",  g('unit_weight_dam', '—'), 'kN/m³')
+        r  = prow(ws, r, "Unit weight (water)",g('unit_weight_water','—'),'kN/m³')
+        r  = prow(ws, r, "Friction coefficient", g('friction_coeff','—'), '')
+        r  = psec(ws, r, "Water Levels")
+        r  = prow(ws, r, "HRV+IS upstream WL",  g('HRV_us','—'), 'm')
+        r  = prow(ws, r, "HRV+IS downstream WL", g('HRV_ds','—'), 'm')
+        r  = prow(ws, r, "DFV upstream WL",   g('DFV_us','—'), 'm')
+        r  = prow(ws, r, "DFV downstream WL", g('DFV_ds','—'), 'm')
+        r  = prow(ws, r, "MFV upstream WL",   g('MFV_us','—'), 'm')
+        r  = prow(ws, r, "MFV downstream WL", g('MFV_ds','—'), 'm')
+        r  = psec(ws, r, "Acceptance Criteria")
+        r  = prow(ws, r, "FS (ULS — HRV, DFV)", g('fs_uls', 1.5), '')
+        r  = prow(ws, r, "FS (ALS — MFV, EQ)",  g('fs_als', 1.1), '')
+        r  = prow(ws, r, "Resultant zone (ULS)", g('res_uls','middle_third').replace('_',' '), '')
+        r  = prow(ws, r, "Resultant zone (ALS)", g('res_als','l6').replace('_',' ').replace('l6','L/6'), '')
+        if g('drainage_include', False):
+            r = psec(ws, r, "Drainage Curtain")
+            r = prow(ws, r, "Distance from heel", g('drainage_dist','—'), 'm')
+            r = prow(ws, r, "Reduction factor",   g('drainage_rf','—'),   '')
+        if g('silt_include', False):
+            r = psec(ws, r, "Silt")
+            r = prow(ws, r, "Silt surface elevation", g('silt_elevation','—'), 'm')
+            r = prow(ws, r, "Submerged unit weight",  g('silt_unit_weight','—'), 'kN/m³')
+            r = prow(ws, r, "Friction angle φ",       g('silt_phi','—'), '°')
+        if g('ice_include', False):
+            r = psec(ws, r, "Ice Pressure")
+            r = prow(ws, r, "Ice pressure", g('ice_pressure','—'), 'kN/m')
+        if g('rock_bolt_include', False):
+            r = psec(ws, r, "Rock Bolts")
+            r = prow(ws, r, "Force per unit width", g('rock_bolt_force','—'), 'kN/m')
+            r = prow(ws, r, "Cover from heel",      g('rock_bolt_cover','—'), 'm')
+        if g('rock_anchor_include', False):
+            r = psec(ws, r, "Rock Anchors")
+            r = prow(ws, r, "Force per unit width", g('rock_anchor_force','—'), 'kN/m')
+            r = prow(ws, r, "Cover from heel",      g('rock_anchor_cover','—'), 'm')
+        if g('run_EQ', False):
+            r = psec(ws, r, "Earthquake")
+            r = prow(ws, r, "Horizontal acceleration aₕ/g", g('eq_ah','—'), '')
+            r = prow(ws, r, "Vertical acceleration aᵥ/g",   g('eq_av','—'), '')
+        # Blank separator row
+        ws.row_dimensions[r].height = 8; r += 1
+        row_p = r
+    else:
+        row_p = 2
+
     hdrs = ["Dam Height", "Load Case", "FS Sliding", "FS Overturning",
             "Resultant", "x_res (m)", "e (m)", "σ_toe", "σ_heel", "Tens.(m)"]
-    # spread 10 headers across columns A–J
     for ci, h in enumerate(hdrs, 1):
-        c = ws.cell(row=3, column=ci, value=h)
+        c = ws.cell(row=row_p, column=ci, value=h)
         c.font = Font(bold=True, color="000000", name=BODY_FONT, size=BODY_SZ)
         c.fill = hfill(BLUE_MID)
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         c.border = tbord
-    ws.row_dimensions[3].height = 30
+    ws.row_dimensions[row_p].height = 30
 
-    r_idx = 4
+    r_idx = row_p + 1
     for blk in blocks:
         for res in blk.results:
             fs_ok  = res.FS_sliding >= res.fs_threshold
@@ -1029,7 +1104,8 @@ def export_heights(data: ExportHeightsRequest):
                 results=sec.results,
             ))
         wb = _build_workbook(title="MULTI-HEIGHT DAM STABILITY — RESULTS",
-                             blocks=blocks)
+                             blocks=blocks,
+                             params=data.main.params)
         buf = io.BytesIO(); wb.save(buf); buf.seek(0)
         return StreamingResponse(
             buf,
