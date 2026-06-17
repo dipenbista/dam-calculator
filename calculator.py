@@ -1349,7 +1349,7 @@ def plot_to_base64(res, geom, mat, drainage, silt, backfill=None):
     ax.invert_xaxis(); ax.set_aspect('equal')
     ax.grid(True, alpha=0.18)
     ax.yaxis.set_major_formatter(
-        ticker.FuncFormatter(lambda v, _: f'{v + geom.toe_elevation:.0f}'))
+        ticker.FuncFormatter(lambda v, _: f'{v + geom.toe_elevation:.2f}'.rstrip('0').rstrip('.')))
     ax.set_ylabel('Elevation (m)', fontsize=10)
     ax.set_xlabel('← UPSTREAM          Distance from downstream toe (m)          DOWNSTREAM →',
                   fontsize=9)
