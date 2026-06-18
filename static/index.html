@@ -1002,13 +1002,16 @@ function renderMHResults(data) {
       const color      = (fsOk && midOk) ? '#1a6b3a' : '#8b1a1a';
       const bg         = (fsOk && midOk) ? '#d6f0e0' : '#fdecea';
       const fsDisp     = res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3);
-      const foDisp     = res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3);
       const xrDisp     = res.x_resultant.toFixed(3);
+      const Lsec       = sec.base_width;
+      const [zLo, zHi] = res.resultant_check_type === 'Middle third'
+        ? [Lsec / 3, 2 * Lsec / 3]
+        : [Lsec / 6, 5 * Lsec / 6];
+      const xrCrit     = `${zLo.toFixed(3)}–${zHi.toFixed(3)} m`;
       return `<tr style="background:${bg}">
         <td style="padding:5px 8px;font-weight:600;color:${color}">${displayCaseName(res.case_name)}</td>
         <td style="padding:5px 8px;text-align:right">${fsDisp}</td>
-        <td style="padding:5px 8px;text-align:right">${foDisp}</td>
-        <td style="padding:5px 8px;text-align:right">${xrDisp}</td>
+        <td style="padding:5px 8px;text-align:right">${xrDisp} <span style="color:#888;font-size:0.85em">(${xrCrit})</span></td>
         <td style="padding:5px 8px;text-align:center;font-weight:600;color:${color}">
           ${midOk ? '✓ OK' : '✗ Outside'}</td>
       </tr>`;
@@ -1028,7 +1031,6 @@ function renderMHResults(data) {
             <tr style="background:#eaf3fb">
               <th style="padding:5px 8px;text-align:left">Load Case</th>
               <th style="padding:5px 8px;text-align:right">FS Sliding</th>
-              <th style="padding:5px 8px;text-align:right">FS Overturn</th>
               <th style="padding:5px 8px;text-align:right">x from Toe (m)</th>
               <th style="padding:5px 8px;text-align:center">Resultant</th>
             </tr>
@@ -1899,9 +1901,11 @@ function renderResults(data) {
     // Build threshold label for FS Sliding card
     const fsLabel = `FS Sliding (≥ ${fsThresh.toFixed(1)})`;
     // Build resultant label from backend-provided resultant_check_type
-    const midLabel = res.resultant_check_type === 'Middle third'
-      ? `Resultant (L/3 – 2L/3)`
-      : `Resultant (L/6 – 5L/6)`;
+    const L = geom.base_length_horizontal;
+    const [zoneLo, zoneHi] = res.resultant_check_type === 'Middle third'
+      ? [L / 3, 2 * L / 3]
+      : [L / 6, 5 * L / 6];
+    const midLabel = `Resultant (${zoneLo.toFixed(3)} – ${zoneHi.toFixed(3)} m)`;
 
     const summaryHtml = `
       <div class="summary-grid">
@@ -1910,7 +1914,7 @@ function renderResults(data) {
         ${kpi(res.in_middle_third ? '✓ OK' : '✗ Outside', midLabel, midOk)}
         ${kpi(res.sigma_toe.toFixed(1)  + ' kN/m²', 'σ Toe',  res.sigma_toe  >= 0)}
         ${kpi(res.sigma_heel.toFixed(1) + ' kN/m²', 'σ Heel', heelOk)}
-        ${kpi(res.x_resultant.toFixed(3) + ' m',    'Resultant x from toe', null)}
+        ${kpi(res.x_resultant.toFixed(3) + ' m',    `Resultant x from toe (${zoneLo.toFixed(3)}–${zoneHi.toFixed(3)} m)`, null)}
         ${kpi(res.eccentricity.toFixed(3) + ' m',   'Eccentricity e', null)}
         ${kpi(res.tension_length > 0.001
               ? res.tension_length.toFixed(3) + ' m' : '—',
