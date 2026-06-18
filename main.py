@@ -594,7 +594,7 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
         row_p = 2
 
     hdrs = ["Dam Height", "Load Case", "FS Sliding", "FS Overturning",
-            "Resultant", "x_res (m)", "e (m)", "σ_toe", "σ_heel", "Tens.(m)"]
+            "Resultant", "x_res (m)", "Criteria", "e (m)", "σ_toe", "σ_heel", "Tens.(m)"]
     for ci, h in enumerate(hdrs, 1):
         c = ws.cell(row=row_p, column=ci, value=h)
         c.font = Font(bold=True, color="000000", name=BODY_FONT, size=BODY_SZ)
@@ -621,7 +621,7 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
                 if ok is True:  cc.fill = hfill("C6EFCE")
                 elif ok is False: cc.fill = hfill("FFC7CE")
             fs_cell(3, res.FS_sliding, fs_ok)
-            fs_cell(4, res.FS_overturning, True)
+            fs_cell(4, res.FS_overturning, None)
 
             ck = ws.cell(row=r_idx, column=5, value="✓ OK" if mid_ok else "✗ OUT")
             ck.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
@@ -634,15 +634,22 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             xr_cell.alignment = Alignment(horizontal="center", vertical="center")
             xr_cell.border = tbord
             xr_cell.fill = hfill("C6EFCE") if mid_ok else hfill("FFC7CE")
-            nf(ws, r_idx, 7, res.eccentricity, '0.000')
-            nf(ws, r_idx, 8, res.sigma_toe, '0.0')
-            nf(ws, r_idx, 9, res.sigma_heel, '0.0')
-            nf(ws, r_idx, 10, res.tension_length if res.tension_length > 0.001 else 0,
+            L_blk = blk.base_width
+            if res.resultant_check_type == "Middle third":
+                z_lo, z_hi = L_blk / 3, 2 * L_blk / 3
+            else:
+                z_lo, z_hi = L_blk / 6, 5 * L_blk / 6
+            crit_label = f"{z_lo:.3f} – {z_hi:.3f} m"
+            wc(ws, r_idx, 7, crit_label, align='center')
+            nf(ws, r_idx, 8, res.eccentricity, '0.000')
+            nf(ws, r_idx, 9, res.sigma_toe, '0.0')
+            nf(ws, r_idx, 10, res.sigma_heel, '0.0')
+            nf(ws, r_idx, 11, res.tension_length if res.tension_length > 0.001 else 0,
                '0.000')
             ws.row_dimensions[r_idx].height = 15
             r_idx += 1
 
-    for ci, w in enumerate([13,10,9,11,9,8,7,7,8,8], 1):
+    for ci, w in enumerate([13,10,9,11,9,8,15,7,7,8,8], 1):
         ws.column_dimensions[get_column_letter(ci)].width = w
 
     # =====================================================================
