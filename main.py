@@ -585,8 +585,8 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             r = prow(ws, r, "Cover from heel",      g('rock_anchor_cover','—'), 'm')
         if g('run_EQ', False):
             r = psec(ws, r, "Earthquake")
-            r = prow(ws, r, "Horizontal acceleration aₕ/g", g('eq_ah','—'), '')
-            r = prow(ws, r, "Vertical acceleration aᵥ/g",   g('eq_av','—'), '')
+            r = prow(ws, r, "Horizontal acceleration aₕ", g('eq_ah','—'), '')
+            r = prow(ws, r, "Vertical acceleration aᵥ",   g('eq_av','—'), '')
         # Blank separator row
         ws.row_dimensions[r].height = 8; r += 1
         row_p = r
