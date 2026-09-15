@@ -153,7 +153,7 @@ Similar to rock bolts. A vertical stabilising force applied at a specified dista
 
 Additional user-defined forces, useful for modelling external loads not covered by the standard categories.
 
-- **Vertical forces**: positive = downward (stabilising). Enter force (kN/m) and horizontal distance from toe (m).
+- **Vertical forces**: positive = downward (stabilising). Enter force (kN/m) and horizontal distance from heel (m).
 - **Horizontal forces**: positive = toward upstream (stabilising). Enter force (kN/m) and height above base (m).
 
 ---
