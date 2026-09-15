@@ -334,7 +334,7 @@ def calculate(req: LoadCaseRequest):
                 """Replace inf with a large sentinel for JSON serialisation."""
                 if v == float('inf'):  return 9999.0
                 if v == float('-inf'): return -9999.0
-                return round(v, 4)
+                return round(v, 3)
 
             results_out.append(CaseResult(
                 case_name            = res['case_name'],
@@ -771,11 +771,11 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             blk_L = blk.base_width   # metres
 
             if res.resultant_check_type == "L/6–5L/6":
-                x_lo = round(blk_L / 6, 3); x_hi = round(5 * blk_L / 6, 3)
+                x_lo = round(blk_L / 6, 2); x_hi = round(5 * blk_L / 6, 2)
                 x_range_str = f"L/6 – 5L/6  ({x_lo:.3f} – {x_hi:.3f} m)"
                 crit_str    = f"L/6 – 5L/6 (L={blk_L:.2f} m)"
             else:
-                x_lo = round(blk_L / 3, 3); x_hi = round(2 * blk_L / 3, 3)
+                x_lo = round(blk_L / 3, 2); x_hi = round(2 * blk_L / 3, 2)
                 x_range_str = f"L/3 – 2L/3  ({x_lo:.3f} – {x_hi:.3f} m)"
                 crit_str    = f"L/3 – 2L/3 (L={blk_L:.2f} m)"
 
@@ -869,7 +869,7 @@ class MultiHeightResponse(BaseModel):
 def _safe(v):
     if v == float('inf'):  return 9999.0
     if v == float('-inf'): return -9999.0
-    return round(v, 4)
+    return round(v, 3)
 
 
 def _solve_case(case_name, geom, mat, wl_us, wl_ds,
