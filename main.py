@@ -319,12 +319,12 @@ def calculate(req: LoadCaseRequest):
             forces_out = [
                 ForceRow(
                     name        = r['name'],
-                    V           = round(r['V'],       3),
-                    H           = round(r['H'],       3),
-                    x_from_toe  = round(r['x_from_toe'], 4),
-                    y_from_toe  = round(r['y_from_toe'], 4),
-                    M_res       = round(r['M_res'],   3),
-                    M_ov        = round(r['M_ov'],    3),
+                    V           = round(r['V'],       2),
+                    H           = round(r['H'],       2),
+                    x_from_toe  = round(r['x_from_toe'], 3),
+                    y_from_toe  = round(r['y_from_toe'], 3),
+                    M_res       = round(r['M_res'],   1),
+                    M_ov        = round(r['M_ov'],    1),
                     stabilising = r['stabilising'],
                 )
                 for r in res['rows']
