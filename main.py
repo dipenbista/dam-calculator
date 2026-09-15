@@ -254,7 +254,7 @@ def calculate(req: LoadCaseRequest):
                 and hrv_head > req.rock_bolt_depth_limit):
             warnings.append(
                 f"Rock bolts disabled: HRV water depth above heel "
-                f"{hrv_head:.2f} m exceeds the {req.rock_bolt_depth_limit:.1f} m "
+                f"{hrv_head:.2f} m exceeds the {req.rock_bolt_depth_limit:.2f} m "
                 f"depth limit for rock bolt use.")
 
         # ── Which cases to run ────────────────────────────────────────
@@ -319,10 +319,10 @@ def calculate(req: LoadCaseRequest):
             forces_out = [
                 ForceRow(
                     name        = r['name'],
-                    V           = round(r['V'],       2),
-                    H           = round(r['H'],       2),
-                    x_from_toe  = round(r['x_from_toe'], 3),
-                    y_from_toe  = round(r['y_from_toe'], 3),
+                    V           = round(r['V'],       1),
+                    H           = round(r['H'],       1),
+                    x_from_toe  = round(r['x_from_toe'], 2),
+                    y_from_toe  = round(r['y_from_toe'], 2),
                     M_res       = round(r['M_res'],   1),
                     M_ov        = round(r['M_ov'],    1),
                     stabilising = r['stabilising'],
@@ -330,28 +330,28 @@ def calculate(req: LoadCaseRequest):
                 for r in res['rows']
             ]
 
-            def safe(v):
+            def safe(v, nd=4):
                 """Replace inf with a large sentinel for JSON serialisation."""
                 if v == float('inf'):  return 9999.0
                 if v == float('-inf'): return -9999.0
-                return round(v, 3)
+                return round(v, nd)
 
             results_out.append(CaseResult(
                 case_name            = res['case_name'],
-                sum_V                = safe(res['sum_V']),
-                H_net                = safe(res['H_net']),
-                sum_M_res            = safe(res['sum_M_res']),
-                sum_M_ov             = safe(res['sum_M_ov']),
-                x_resultant          = safe(res['x_resultant']),
-                eccentricity         = safe(res['eccentricity']),
+                sum_V                = safe(res['sum_V'], 1),
+                H_net                = safe(res['H_net'], 1),
+                sum_M_res            = safe(res['sum_M_res'], 1),
+                sum_M_ov             = safe(res['sum_M_ov'], 1),
+                x_resultant          = safe(res['x_resultant'], 2),
+                eccentricity         = safe(res['eccentricity'], 2),
                 in_middle_third      = res['in_middle_third'],
                 resultant_check_type = res['resultant_check_type'],
                 fs_threshold         = res.get('fs_threshold', 1.5),
                 sigma_toe            = safe(res['sigma_toe']),
                 sigma_heel           = safe(res['sigma_heel']),
-                FS_sliding           = safe(res['FS_sliding']),
-                FS_overturning       = safe(res['FS_overturning']),
-                tension_length       = safe(res['tension_length']),
+                FS_sliding           = safe(res['FS_sliding'], 2),
+                FS_overturning       = safe(res['FS_overturning'], 2),
+                tension_length       = safe(res['tension_length'], 2),
                 forces               = forces_out,
                 messages             = res.get('messages', []),
                 plot_dam_base64      = plot_imgs['dam'],
@@ -361,8 +361,8 @@ def calculate(req: LoadCaseRequest):
         geom_info = GeometryInfo(
             toe_elevation          = geom.toe_elevation,
             heel_elevation         = geom.heel_elevation,
-            base_length_horizontal = round(geom.base_length_horizontal, 3),
-            dam_height             = round(geom.dam_top_elevation_rel,  3),
+            base_length_horizontal = round(geom.base_length_horizontal, 2),
+            dam_height             = round(geom.dam_top_elevation_rel,  2),
             warnings               = warnings,
         )
         return CalculationResponse(geometry=geom_info, results=results_out)
@@ -585,8 +585,8 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             r = prow(ws, r, "Cover from heel",      g('rock_anchor_cover','—'), 'm')
         if g('run_EQ', False):
             r = psec(ws, r, "Earthquake")
-            r = prow(ws, r, "Horizontal acceleration aₕ", g('eq_ah','—'), 'm/s²')
-            r = prow(ws, r, "Vertical acceleration aᵥ",   g('eq_av','—'), 'm/s²')
+            r = prow(ws, r, "Horizontal acceleration aₕ/g", g('eq_ah','—'), '')
+            r = prow(ws, r, "Vertical acceleration aᵥ/g",   g('eq_av','—'), '')
         # Blank separator row
         ws.row_dimensions[r].height = 8; r += 1
         row_p = r
@@ -614,7 +614,7 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             def fs_cell(col, val, ok):
                 disp = "∞" if val >= 9998 else val
                 cc = ws.cell(row=r_idx, column=col, value=disp)
-                if not isinstance(disp, str): cc.number_format = '0.000'
+                if not isinstance(disp, str): cc.number_format = '0.00'
                 cc.font = Font(bold=True, name=BODY_FONT, size=BODY_SZ)
                 cc.alignment = Alignment(horizontal="center", vertical="center")
                 cc.border = tbord
@@ -629,7 +629,7 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
             ck.border = tbord
             ck.fill = hfill("C6EFCE") if mid_ok else hfill("FFC7CE")
             xr_cell = ws.cell(row=r_idx, column=6, value=res.x_resultant)
-            xr_cell.number_format = '0.000'
+            xr_cell.number_format = '0.00'
             xr_cell.font = Font(name=BODY_FONT, size=BODY_SZ)
             xr_cell.alignment = Alignment(horizontal="center", vertical="center")
             xr_cell.border = tbord
@@ -639,13 +639,13 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
                 z_lo, z_hi = L_blk / 3, 2 * L_blk / 3
             else:
                 z_lo, z_hi = L_blk / 6, 5 * L_blk / 6
-            crit_label = f"{z_lo:.3f} – {z_hi:.3f} m"
+            crit_label = f"{z_lo:.2f} – {z_hi:.2f} m"
             wc(ws, r_idx, 7, crit_label, align='center')
-            nf(ws, r_idx, 8, res.eccentricity, '0.000')
+            nf(ws, r_idx, 8, res.eccentricity, '0.00')
             nf(ws, r_idx, 9, res.sigma_toe, '0.0')
             nf(ws, r_idx, 10, res.sigma_heel, '0.0')
             nf(ws, r_idx, 11, res.tension_length if res.tension_length > 0.001 else 0,
-               '0.000')
+               '0.00')
             ws.row_dimensions[r_idx].height = 15
             r_idx += 1
 
@@ -732,23 +732,23 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
                 wc(ws, row, 1, f.name)
                 wc(ws, row, 2, "Stab" if f.stabilising else "Dest",
                    align='center', bold=True)
-                nf(ws, row, 3, f.V,          '0.00')
-                nf(ws, row, 4, f.H,          '0.00')
-                nf(ws, row, 5, f.x_from_toe, '0.000')
-                nf(ws, row, 6, f.y_from_toe, '0.000')
-                nf(ws, row, 7, f.M_res,      '0.00')
-                nf(ws, row, 8, f.M_ov,       '0.00')
+                nf(ws, row, 3, f.V,          '0.0')
+                nf(ws, row, 4, f.H,          '0.0')
+                nf(ws, row, 5, f.x_from_toe, '0.00')
+                nf(ws, row, 6, f.y_from_toe, '0.00')
+                nf(ws, row, 7, f.M_res,      '0.0')
+                nf(ws, row, 8, f.M_ov,       '0.0')
                 ws.row_dimensions[row].height = 13
                 row += 1
             # Resultant totals row (kept in force table only)
             wc(ws, row, 1, "RESULTANT", bold=True)
             wc(ws, row, 2, "")
-            nf(ws, row, 3, res.sum_V,   '0.00', bold=True)
-            nf(ws, row, 4, res.H_net,   '0.00', bold=True)
+            nf(ws, row, 3, res.sum_V,   '0.0', bold=True)
+            nf(ws, row, 4, res.H_net,   '0.0', bold=True)
             wc(ws, row, 5, "")
             wc(ws, row, 6, "")
-            nf(ws, row, 7, res.sum_M_res,'0.00', bold=True)
-            nf(ws, row, 8, res.sum_M_ov, '0.00', bold=True)
+            nf(ws, row, 7, res.sum_M_res,'0.0', bold=True)
+            nf(ws, row, 8, res.sum_M_ov, '0.0', bold=True)
             ws.row_dimensions[row].height = 14
             row += 2   # spacer
 
@@ -772,25 +772,25 @@ def _build_workbook(title: str, blocks: list, params: dict = {}):
 
             if res.resultant_check_type == "L/6–5L/6":
                 x_lo = round(blk_L / 6, 2); x_hi = round(5 * blk_L / 6, 2)
-                x_range_str = f"L/6 – 5L/6  ({x_lo:.3f} – {x_hi:.3f} m)"
+                x_range_str = f"L/6 – 5L/6  ({x_lo:.2f} – {x_hi:.2f} m)"
                 crit_str    = f"L/6 – 5L/6 (L={blk_L:.2f} m)"
             else:
                 x_lo = round(blk_L / 3, 2); x_hi = round(2 * blk_L / 3, 2)
-                x_range_str = f"L/3 – 2L/3  ({x_lo:.3f} – {x_hi:.3f} m)"
+                x_range_str = f"L/3 – 2L/3  ({x_lo:.2f} – {x_hi:.2f} m)"
                 crit_str    = f"L/3 – 2L/3 (L={blk_L:.2f} m)"
 
             def status_txt(ok): return "OK" if ok else "CHECK"
             # items: (label, value, ok_flag, number_format, note_text)
             items = [
-                ("FS Sliding",      res.FS_sliding,      res.FS_sliding >= fs_thr, '0.000', f"Threshold ≥ {fs_thr:.1f}"),
-                ("FS Overturning",  res.FS_overturning,  None, '0.000', ""),
+                ("FS Sliding",      res.FS_sliding,      res.FS_sliding >= fs_thr, '0.00', f"Threshold ≥ {fs_thr:.2f}"),
+                ("FS Overturning",  res.FS_overturning,  None, '0.00', ""),
                 ("Resultant",       "✓ OK" if res.in_middle_third else "✗ OUTSIDE",
                                      res.in_middle_third, '@', crit_str),
-                ("x_resultant (m)", res.x_resultant,     res.in_middle_third, '0.000', x_range_str),
-                ("Eccentricity (m)",res.eccentricity,    None, '0.000', ""),
+                ("x_resultant (m)", res.x_resultant,     res.in_middle_third, '0.00', x_range_str),
+                ("Eccentricity (m)",res.eccentricity,    None, '0.00', ""),
                 ("σ_toe (kN/m²)",   res.sigma_toe,       None, '0.00', "Compression = positive"),
                 ("σ_heel (kN/m²)",  res.sigma_heel,      None, '0.00', "Compression = positive"),
-                ("Tension len (m)", res.tension_length,  None, '0.000', ""),
+                ("Tension len (m)", res.tension_length,  None, '0.00', ""),
             ]
             for (lbl, val, ok, fmt, note) in items:
                 wc(ws, row, 1, lbl, bold=True)
@@ -866,10 +866,10 @@ class MultiHeightResponse(BaseModel):
     sections: List[SectionResponse]
 
 
-def _safe(v):
+def _safe(v, nd=4):
     if v == float('inf'):  return 9999.0
     if v == float('-inf'): return -9999.0
-    return round(v, 3)
+    return round(v, nd)
 
 
 def _solve_case(case_name, geom, mat, wl_us, wl_ds,
@@ -893,7 +893,7 @@ def _solve_case(case_name, geom, mat, wl_us, wl_ds,
     res['earthquake'] = earthquake   # store for plotting
     imgs = plot_to_base64(res, geom, mat, drainage, silt, backfill)
     forces_out = [
-        ForceRow(name=r['name'], V=round(r['V'],2), H=round(r['H'],2),
+        ForceRow(name=r['name'], V=round(r['V'],1), H=round(r['H'],1),
                  x_from_toe=round(r['x_from_toe'],2), y_from_toe=round(r['y_from_toe'],2),
                  M_res=round(r['M_res'],1), M_ov=round(r['M_ov'],1),
                  stabilising=r['stabilising'])
@@ -901,15 +901,15 @@ def _solve_case(case_name, geom, mat, wl_us, wl_ds,
     ]
     return CaseResult(
         case_name=res['case_name'],
-        sum_V=_safe(res['sum_V']), H_net=_safe(res['H_net']),
-        sum_M_res=_safe(res['sum_M_res']), sum_M_ov=_safe(res['sum_M_ov']),
-        x_resultant=_safe(res['x_resultant']), eccentricity=_safe(res['eccentricity']),
+        sum_V=_safe(res['sum_V'], 1), H_net=_safe(res['H_net'], 1),
+        sum_M_res=_safe(res['sum_M_res'], 1), sum_M_ov=_safe(res['sum_M_ov'], 1),
+        x_resultant=_safe(res['x_resultant'], 2), eccentricity=_safe(res['eccentricity'], 2),
         in_middle_third=res['in_middle_third'],
         resultant_check_type=res['resultant_check_type'],
         fs_threshold=res.get('fs_threshold', 1.5),
         sigma_toe=_safe(res['sigma_toe']), sigma_heel=_safe(res['sigma_heel']),
-        FS_sliding=_safe(res['FS_sliding']), FS_overturning=_safe(res['FS_overturning']),
-        tension_length=_safe(res['tension_length']),
+        FS_sliding=_safe(res['FS_sliding'], 2), FS_overturning=_safe(res['FS_overturning'], 2),
+        tension_length=_safe(res['tension_length'], 2),
         forces=forces_out, messages=res.get('messages', []),
         plot_dam_base64=imgs['dam'], plot_stress_base64=imgs['stress'],
     )
@@ -1067,8 +1067,8 @@ def _run_section(req: LoadCaseRequest, sec: SectionInput) -> SectionResponse:
         label=sec.label,
         heel_elevation=geom.heel_elevation,
         toe_elevation=geom.toe_elevation,
-        base_width=round(geom.base_length_horizontal, 3),
-        dam_height=round(geom.dam_top_elevation_rel, 3),
+        base_width=round(geom.base_length_horizontal, 2),
+        dam_height=round(geom.dam_top_elevation_rel, 2),
         results=results_out,
     )
 

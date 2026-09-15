@@ -753,7 +753,7 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
         msgs.append({"type": "warning",
                      "text": (f"Rock bolts NOT included: HRV water depth above heel "
                               f"({hrv_head:.2f} m) exceeds the user-set "
-                              f"{rb_depth_limit:.1f} m depth limit for rock bolt use.")})
+                              f"{rb_depth_limit:.2f} m depth limit for rock bolt use.")})
 
     # ── 2. Inclined base ─────────────────────────────────────────────────────
     if abs(geom.heel_elevation - geom.toe_elevation) > 0.05:
@@ -762,7 +762,7 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                               f"{geom.heel_elevation:.2f} m, toe elevation "
                               f"{geom.toe_elevation:.2f} m. Uplift and base "
                               f"stress are computed on the horizontal projection "
-                              f"(L = {L:.3f} m).")})
+                              f"(L = {L:.2f} m).")})
 
     # ── 3. Drainage in tension zone → ineffective ────────────────────────────
     if drainage.include and tL > 1e-3:
@@ -772,7 +772,7 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
             msgs.append({"type": "warning",
                          "text": (f"Drainage curtain is within the tension zone "
                                   f"(drain at {xd:.2f} m from toe; compression "
-                                  f"zone starts at {x_cs:.3f} m from toe). "
+                                  f"zone starts at {x_cs:.2f} m from toe). "
                                   f"Drain is ineffective — uplift calculated "
                                   f"without drainage reduction.")})
 
@@ -793,14 +793,14 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
                       f"(toe is {abs(geom.toe_elevation - geom.heel_elevation):.2f} m "
                       f"higher than the heel). The dam's weight component along the "
                       f"inclined base acts upstream, fully counteracting the downstream "
-                      f"driving forces. Net shear on the base plane = {T:.3f} kN/m ≤ 0 "
+                      f"driving forces. Net shear on the base plane = {T:.1f} kN/m ≤ 0 "
                       f"— no sliding tendency in the downstream direction.")
         elif T <= 1e-6 and res.get('H_net', 0.0) <= 0:
             reason = (f"Net horizontal force is zero or acts upstream "
-                      f"(H_net = {res.get('H_net',0):.3f} kN/m). "
+                      f"(H_net = {res.get('H_net',0):.1f} kN/m). "
                       f"No downstream sliding tendency.")
         else:
-            reason = (f"Net shear on the base plane = {T:.3f} kN/m ≤ 0 "
+            reason = (f"Net shear on the base plane = {T:.1f} kN/m ≤ 0 "
                       f"— no downstream sliding tendency under this load combination.")
         msgs.append({"type": "info",
                      "text": f"FS Sliding = ∞: {reason}"})
@@ -808,7 +808,7 @@ def generate_messages(case_name, geom, mat, wl_us, wl_ds,
     # ── 6. FS_sliding below 1.0 ─────────────────────────────────────────────
     if fs < 1.0:
         msgs.append({"type": "alert",
-                     "text": (f"CRITICAL: Sliding factor of safety ({fs:.3f}) "
+                     "text": (f"CRITICAL: Sliding factor of safety ({fs:.2f}) "
                               f"is below 1.0 — the dam will slide under "
                               f"this load case.")})
 
@@ -1413,12 +1413,12 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
 
     # ── Project / geometry summary ────────────────────────────────────────────
     hdr2('GEOMETRY')
-    ln(f'  Toe elevation              = {toe:.3f} m')
-    ln(f'  Heel elevation             = {geom.heel_elevation:.3f} m')
-    ln(f'  Base length (L)            = {L:.3f} m')
-    ln(f'  Dam height                 = {geom.dam_top_elevation_rel:.3f} m')
-    ln(f'  US water level (WL_US)     = {wl_us:.3f} m  (h = {wl_us - geom.heel_elevation:.3f} m above heel)')
-    ln(f'  DS water level (WL_DS)     = {wl_ds:.3f} m  (h = {max(wl_ds - toe, 0):.3f} m above toe)')
+    ln(f'  Toe elevation              = {toe:.2f} m')
+    ln(f'  Heel elevation             = {geom.heel_elevation:.2f} m')
+    ln(f'  Base length (L)            = {L:.2f} m')
+    ln(f'  Dam height                 = {geom.dam_top_elevation_rel:.2f} m')
+    ln(f'  US water level (WL_US)     = {wl_us:.2f} m  (h = {wl_us - geom.heel_elevation:.2f} m above heel)')
+    ln(f'  DS water level (WL_DS)     = {wl_ds:.2f} m  (h = {max(wl_ds - toe, 0):.2f} m above toe)')
     ln()
     ln(f'  Material:')
     ln(f'    Unit weight dam   γ_c    = {mat.unit_weight_dam:.1f} kN/m³')
@@ -1442,28 +1442,28 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             ln(f'  │  Dam cross-section polygon area:')
             ln(f'  │    A                          = {area:.4f} m²')
             row('│  V = γ_c × A', f'{mat.unit_weight_dam:.1f} × {area:.4f}', f'{V:.3f}', 'kN/m')
-            ln(f'  │  Centroid x from toe (cx)     = {cx:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            ln(f'  │  Centroid x from toe (cx)     = {cx:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Water Weight (US) ─────────────────────────────────────────────────
         elif name == 'Water Weight (US)':
             h_ww = wl_us - geom.heel_elevation
             ln(f'  │  Upstream water column above heel:')
-            ln(f'  │    h                          = {wl_us:.3f} - {geom.heel_elevation:.3f} = {h_ww:.3f} m')
+            ln(f'  │    h                          = {wl_us:.2f} - {geom.heel_elevation:.2f} = {h_ww:.2f} m')
             area_ww = V / gw if gw > 0 else 0
             row('│  V = γ_w × A_water', f'{gw:.1f} × {area_ww:.4f}', f'{V:.3f}', 'kN/m')
-            ln(f'  │  Centroid x from toe (cx)     = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            ln(f'  │  Centroid x from toe (cx)     = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Water Weight (DS) ─────────────────────────────────────────────────
         elif name == 'Water Weight (DS)':
             h_ww = max(wl_ds - toe, 0)
             ln(f'  │  Downstream water column above toe:')
-            ln(f'  │    h                          = {wl_ds:.3f} - {toe:.3f} = {h_ww:.3f} m')
+            ln(f'  │    h                          = {wl_ds:.2f} - {toe:.2f} = {h_ww:.2f} m')
             area_ww = V / gw if gw > 0 else 0
             row('│  V = γ_w × A_water', f'{gw:.1f} × {area_ww:.4f}', f'{V:.3f}', 'kN/m')
-            ln(f'  │  Centroid x from toe (cx)     = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            ln(f'  │  Centroid x from toe (cx)     = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Water Pressure US ─────────────────────────────────────────────────
         elif 'Water Pressure US' in name:
@@ -1474,17 +1474,17 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             p_top  = gw * h_ot
             p_base = gw * (h_ot + h_act)
             ln(f'  │  Upstream water pressure (trapezoidal if overtopping):')
-            ln(f'  │    h_us (full depth)           = {wl_us:.3f} - {geom.heel_elevation:.3f} = {h_us_full:.3f} m')
-            ln(f'  │    h_act (on face)             = {h_act:.3f} m')
+            ln(f'  │    h_us (full depth)           = {wl_us:.2f} - {geom.heel_elevation:.2f} = {h_us_full:.2f} m')
+            ln(f'  │    h_act (on face)             = {h_act:.2f} m')
             if h_ot > 0:
-                ln(f'  │    h_ot (above crest)         = {h_ot:.3f} m')
-                ln(f'  │    p_top  = γ_w × h_ot        = {gw:.1f} × {h_ot:.3f} = {p_top:.3f} kPa')
-            ln(f'  │    p_base = γ_w × h_us         = {gw:.1f} × {h_us_full:.3f} = {p_base:.3f} kPa')
+                ln(f'  │    h_ot (above crest)         = {h_ot:.2f} m')
+                ln(f'  │    p_top  = γ_w × h_ot        = {gw:.1f} × {h_ot:.2f} = {p_top:.3f} kPa')
+            ln(f'  │    p_base = γ_w × h_us         = {gw:.1f} × {h_us_full:.2f} = {p_base:.3f} kPa')
             row('│  F = ½(p_top + p_base) × h_act',
-                f'½({p_top:.3f}+{p_base:.3f})×{h_act:.3f}', f'{H:.3f}', 'kN/m')
+                f'½({p_top:.3f}+{p_base:.3f})×{h_act:.2f}', f'{H:.1f}', 'kN/m')
             F2, ybar = H, y - heel_y
-            ln(f'  │  Moment arm (from heel)        = {y:.4f} m')
-            ln(f'  │  Overturning → M_ov = F × y   = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+            ln(f'  │  Moment arm (from heel)        = {y:.2f} m')
+            ln(f'  │  Overturning → M_ov = F × y   = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         # ── Water Pressure DS ─────────────────────────────────────────────────
         elif 'Water Pressure DS' in name:
@@ -1495,11 +1495,11 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             p_top_ds  = gw * h_ot_ds
             p_base_ds = gw * (h_ot_ds + h_act_ds)
             ln(f'  │  Downstream water pressure:')
-            ln(f'  │    h_ds                        = {wl_ds:.3f} - {toe:.3f} = {h_ds_full:.3f} m')
-            ln(f'  │    p_base = γ_w × h_ds         = {gw:.1f} × {h_ds_full:.3f} = {p_base_ds:.3f} kPa')
+            ln(f'  │    h_ds                        = {wl_ds:.2f} - {toe:.2f} = {h_ds_full:.2f} m')
+            ln(f'  │    p_base = γ_w × h_ds         = {gw:.1f} × {h_ds_full:.2f} = {p_base_ds:.3f} kPa')
             row('│  F = ½ × p_base × h_act',
-                f'½ × {p_base_ds:.3f} × {h_act_ds:.3f}', f'{H:.3f}', 'kN/m')
-            ln(f'  │  Stabilising → M_res = F × y  = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+                f'½ × {p_base_ds:.3f} × {h_act_ds:.2f}', f'{H:.1f}', 'kN/m')
+            ln(f'  │  Stabilising → M_res = F × y  = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         # ── Uplift ────────────────────────────────────────────────────────────
         elif name == 'Uplift':
@@ -1508,8 +1508,8 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             p_heel = gw * h_us_u
             p_toe  = gw * h_ds_u
             ln(f'  │  Uplift pressure (trapezoidal):')
-            ln(f'  │    p_heel = γ_w × h_us         = {gw:.1f} × {h_us_u:.3f} = {p_heel:.3f} kPa')
-            ln(f'  │    p_toe  = γ_w × h_ds         = {gw:.1f} × {h_ds_u:.3f} = {p_toe:.3f} kPa')
+            ln(f'  │    p_heel = γ_w × h_us         = {gw:.1f} × {h_us_u:.2f} = {p_heel:.3f} kPa')
+            ln(f'  │    p_toe  = γ_w × h_ds         = {gw:.1f} × {h_ds_u:.2f} = {p_toe:.3f} kPa')
             if drainage.include:
                 d_x   = drainage.distance_from_heel
                 rf    = drainage.reduction_factor
@@ -1519,23 +1519,23 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
                 ln(f'  │    p_drain = p_toe + (p_heel - p_toe) × rf')
                 ln(f'  │           = {p_toe:.3f} + ({p_heel:.3f} - {p_toe:.3f}) × {rf:.3f} = {p_dr:.3f} kPa')
             area_u = abs(V) / gw if gw > 0 else 0
-            row('│  U = γ_w × A_uplift', f'{gw:.1f} × {area_u:.4f}', f'{abs(V):.3f}', 'kN/m  (upward)')
-            ln(f'  │  Centroid x from toe           = {x:.4f} m')
-            ln(f'  │  Overturning → M_ov = U × x   = {abs(V):.3f} × {x:.4f} = {abs(V)*x:.3f} kN·m/m')
+            row('│  U = γ_w × A_uplift', f'{gw:.1f} × {area_u:.4f}', f'{abs(V):.1f}', 'kN/m  (upward)')
+            ln(f'  │  Centroid x from toe           = {x:.2f} m')
+            ln(f'  │  Overturning → M_ov = U × x   = {abs(V):.1f} × {x:.2f} = {abs(V)*x:.1f} kN·m/m')
 
         # ── Silt Pressure ─────────────────────────────────────────────────────
         elif name == 'Silt Pressure (horiz)':
             hs  = silt.height_us
             gs  = silt.unit_weight_submerged
             Ka  = (1 - math.sin(math.radians(silt.phi_deg))) / (1 + math.sin(math.radians(silt.phi_deg)))
-            ln(f'  │  Silt height (h_s)             = {hs:.3f} m')
+            ln(f'  │  Silt height (h_s)             = {hs:.2f} m')
             ln(f'  │  Submerged unit weight γ\'_s    = {gs:.1f} kN/m³')
             ln(f'  │  Friction angle φ              = {silt.phi_deg:.1f}°')
             row('│  Ka = (1-sinφ)/(1+sinφ)', f'(1-sin{silt.phi_deg:.0f}°)/(1+sin{silt.phi_deg:.0f}°)', f'{Ka:.4f}')
             row('│  F = ½ × Ka × γ\'_s × h_s²',
-                f'½ × {Ka:.4f} × {gs:.1f} × {hs:.3f}²', f'{H:.3f}', 'kN/m')
-            ln(f'  │  Moment arm y = h_s/3          = {hs:.3f}/3 = {hs/3:.4f} m')
-            ln(f'  │  Overturning → M_ov = F × y   = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+                f'½ × {Ka:.4f} × {gs:.1f} × {hs:.2f}²', f'{H:.1f}', 'kN/m')
+            ln(f'  │  Moment arm y = h_s/3          = {hs:.2f}/3 = {hs/3:.2f} m')
+            ln(f'  │  Overturning → M_ov = F × y   = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         # ── Silt Weight ───────────────────────────────────────────────────────
         elif name == 'Silt Weight':
@@ -1544,9 +1544,9 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             ln(f'  │  Silt wedge on upstream face:')
             ln(f'  │    Submerged unit weight γ\'_s  = {gs:.1f} kN/m³')
             ln(f'  │    A_silt (wedge area)         = {area_s:.4f} m²')
-            row('│  V = γ\'_s × A_silt', f'{gs:.1f} × {area_s:.4f}', f'{V:.3f}', 'kN/m')
-            ln(f'  │  Centroid x from toe           = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x  = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            row('│  V = γ\'_s × A_silt', f'{gs:.1f} × {area_s:.4f}', f'{V:.1f}', 'kN/m')
+            ln(f'  │  Centroid x from toe           = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x  = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Backfill Pressure ─────────────────────────────────────────────────
         elif 'Backfill Pressure' in name:
@@ -1555,27 +1555,27 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             h_ds_u = max(wl_ds - toe, 0)
             h_sub  = min(hb, h_ds_u)
             h_dry  = hb - h_sub
-            ln(f'  │  Backfill height               = {hb:.3f} m')
+            ln(f'  │  Backfill height               = {hb:.2f} m')
             ln(f'  │  K₀ (pressure coefficient)     = {Ka_b:.3f}')
             if 'dry' in name:
                 gd = backfill.unit_weight_dry
                 ln(f'  │  Dry unit weight γ_dry         = {gd:.1f} kN/m³')
-                ln(f'  │  Dry height h_dry              = {h_dry:.3f} m')
+                ln(f'  │  Dry height h_dry              = {h_dry:.2f} m')
                 row('│  F = ½ × K₀ × γ_dry × h_dry²',
-                    f'½ × {Ka_b:.3f} × {gd:.1f} × {h_dry:.3f}²', f'{H:.3f}', 'kN/m')
+                    f'½ × {Ka_b:.3f} × {gd:.1f} × {h_dry:.2f}²', f'{H:.1f}', 'kN/m')
             else:
                 gs_b = backfill.unit_weight_submerged
                 sur  = Ka_b * backfill.unit_weight_dry * h_dry
                 Fr   = sur * h_sub
                 Ft   = 0.5 * Ka_b * gs_b * h_sub**2
-                ln(f'  │  Submerged height h_sub        = {h_sub:.3f} m')
+                ln(f'  │  Submerged height h_sub        = {h_sub:.2f} m')
                 ln(f'  │  Surcharge from dry layer:')
-                ln(f'  │    sur = K₀ × γ_dry × h_dry   = {Ka_b:.3f} × {backfill.unit_weight_dry:.1f} × {h_dry:.3f} = {sur:.3f} kPa')
-                ln(f'  │    Fr  = sur × h_sub           = {sur:.3f} × {h_sub:.3f} = {Fr:.3f} kN/m')
-                ln(f'  │    Ft  = ½K₀γ\'h_sub²          = ½×{Ka_b:.3f}×{gs_b:.1f}×{h_sub:.3f}² = {Ft:.3f} kN/m')
-                ln(f'  │    Fs  = Fr + Ft               = {Fr:.3f} + {Ft:.3f} = {H:.3f} kN/m')
-            ln(f'  │  x on DS face (moment arm)     = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = F × x  = {H:.3f} × {x:.4f} = {H*x:.3f} kN·m/m')
+                ln(f'  │    sur = K₀ × γ_dry × h_dry   = {Ka_b:.3f} × {backfill.unit_weight_dry:.1f} × {h_dry:.2f} = {sur:.3f} kPa')
+                ln(f'  │    Fr  = sur × h_sub           = {sur:.3f} × {h_sub:.2f} = {Fr:.1f} kN/m')
+                ln(f'  │    Ft  = ½K₀γ\'h_sub²          = ½×{Ka_b:.3f}×{gs_b:.1f}×{h_sub:.2f}² = {Ft:.1f} kN/m')
+                ln(f'  │    Fs  = Fr + Ft               = {Fr:.1f} + {Ft:.1f} = {H:.1f} kN/m')
+            ln(f'  │  x on DS face (moment arm)     = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = F × x  = {H:.1f} × {x:.2f} = {H*x:.1f} kN·m/m')
 
         # ── Backfill Weight ───────────────────────────────────────────────────
         elif name == 'Backfill Weight':
@@ -1587,39 +1587,39 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             ln(f'  │  Backfill weight wedge on DS face:')
             ln(f'  │    Effective unit weight γ_eff = {g_eff:.3f} kN/m³')
             ln(f'  │    Wedge area A_bf             = {area_b:.4f} m²')
-            row('│  V = γ_eff × A_bf', f'{g_eff:.3f} × {area_b:.4f}', f'{V:.3f}', 'kN/m')
-            ln(f'  │  Centroid x from toe           = {x:.4f} m')
+            row('│  V = γ_eff × A_bf', f'{g_eff:.3f} × {area_b:.4f}', f'{V:.1f}', 'kN/m')
+            ln(f'  │  Centroid x from toe           = {x:.2f} m')
 
         # ── Ice ───────────────────────────────────────────────────────────────
         elif name == 'Ice Pressure':
             ln(f'  │  Horizontal ice pressure (user-defined):')
-            ln(f'  │    F_ice                       = {H:.3f} kN/m  (applied at WL)')
-            ln(f'  │  Height above base y           = {y:.4f} m')
-            ln(f'  │  Overturning → M_ov = F × y   = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+            ln(f'  │    F_ice                       = {H:.1f} kN/m  (applied at WL)')
+            ln(f'  │  Height above base y           = {y:.2f} m')
+            ln(f'  │  Overturning → M_ov = F × y   = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         # ── Rock Bolt ─────────────────────────────────────────────────────────
         elif name == 'Rock Bolt':
             ln(f'  │  Rock bolt — user-defined vertical force:')
-            ln(f'  │    Force per unit width        = {V:.3f} kN/m')
-            ln(f'  │    Cover from heel             = {rock_bolt.cover_from_heel:.3f} m')
-            ln(f'  │    Position x from toe         = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x  = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            ln(f'  │    Force per unit width        = {V:.1f} kN/m')
+            ln(f'  │    Cover from heel             = {rock_bolt.cover_from_heel:.2f} m')
+            ln(f'  │    Position x from toe         = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x  = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Rock Anchor ───────────────────────────────────────────────────────
         elif name == 'Rock Anchor':
             ln(f'  │  Rock anchor — user-defined vertical force:')
-            ln(f'  │    Force per unit width        = {V:.3f} kN/m')
-            ln(f'  │    Cover from heel             = {rock_anchor.cover_from_heel:.3f} m')
-            ln(f'  │    Position x from toe         = {x:.4f} m')
-            ln(f'  │  Stabilising → M_res = V × x  = {V:.3f} × {x:.4f} = {V*x:.3f} kN·m/m')
+            ln(f'  │    Force per unit width        = {V:.1f} kN/m')
+            ln(f'  │    Cover from heel             = {rock_anchor.cover_from_heel:.2f} m')
+            ln(f'  │    Position x from toe         = {x:.2f} m')
+            ln(f'  │  Stabilising → M_res = V × x  = {V:.1f} × {x:.2f} = {V*x:.1f} kN·m/m')
 
         # ── Applied Forces ────────────────────────────────────────────────────
         elif name.startswith('Applied'):
             direction = 'vertical' if abs(V) > abs(H) else 'horizontal'
             magnitude = V if abs(V) > abs(H) else H
             ln(f'  │  Applied {direction} force (user-defined):')
-            ln(f'  │    Force                       = {magnitude:.3f} kN/m')
-            ln(f'  │    Position x from toe         = {x:.4f} m')
+            ln(f'  │    Force                       = {magnitude:.1f} kN/m')
+            ln(f'  │    Position x from toe         = {x:.2f} m')
             ln(f'  │    Height above base           = {y:.4f} m')
 
         # ── EQ Inertia Horizontal ─────────────────────────────────────────────
@@ -1628,11 +1628,11 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             W_eq = mat.unit_weight_dam * area_eq
             ah   = earthquake.a_h if earthquake else 0
             ln(f'  │  Horizontal earthquake inertia force:')
-            ln(f'  │    Dam weight W                = γ_c × A = {mat.unit_weight_dam:.1f} × {area_eq:.4f} = {W_eq:.3f} kN/m')
+            ln(f'  │    Dam weight W                = γ_c × A = {mat.unit_weight_dam:.1f} × {area_eq:.4f} = {W_eq:.1f} kN/m')
             ln(f'  │    a_h/g                       = {ah:.4f} / {g_eq:.3f} = {ah/g_eq:.6f}')
-            row('│  F_ih = (a_h/g) × W', f'{ah/g_eq:.6f} × {W_eq:.3f}', f'{H:.3f}', 'kN/m')
-            ln(f'  │  Applied at dam centroid x     = {x:.4f} m, y = {y:.4f} m')
-            ln(f'  │  Overturning → M_ov = F × y   = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+            row('│  F_ih = (a_h/g) × W', f'{ah/g_eq:.6f} × {W_eq:.1f}', f'{H:.1f}', 'kN/m')
+            ln(f'  │  Applied at dam centroid x     = {x:.2f} m, y = {y:.2f} m')
+            ln(f'  │  Overturning → M_ov = F × y   = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         # ── EQ Inertia Vertical ───────────────────────────────────────────────
         elif name == 'Inertia (vert, EQ)':
@@ -1640,10 +1640,10 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             W_eq = mat.unit_weight_dam * area_eq
             av   = earthquake.a_v if earthquake else 0
             ln(f'  │  Vertical earthquake inertia force (upward):')
-            ln(f'  │    Dam weight W                = {W_eq:.3f} kN/m')
+            ln(f'  │    Dam weight W                = {W_eq:.1f} kN/m')
             ln(f'  │    a_v/g                       = {av:.4f} / {g_eq:.3f} = {av/g_eq:.6f}')
-            row('│  F_iv = (a_v/g) × W', f'{av/g_eq:.6f} × {W_eq:.3f}', f'{abs(V):.3f}', 'kN/m  (upward)')
-            ln(f'  │  Applied at dam centroid x     = {x:.4f} m, y = {y:.4f} m')
+            row('│  F_iv = (a_v/g) × W', f'{av/g_eq:.6f} × {W_eq:.1f}', f'{abs(V):.1f}', 'kN/m  (upward)')
+            ln(f'  │  Applied at dam centroid x     = {x:.2f} m, y = {y:.2f} m')
 
         # ── Westergaard ───────────────────────────────────────────────────────
         elif 'Westergaard' in name:
@@ -1658,19 +1658,19 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
             cos2t = math.cos(theta)**2
             F_hd_check = (7/12) * (ah/g_eq) * gw * H_wg**2 * cos2t
             ln(f'  │  Westergaard hydrodynamic pressure:')
-            ln(f'  │    H (depth of water)          = {wl_us:.3f} - {geom.heel_elevation:.3f} = {H_wg:.3f} m')
+            ln(f'  │    H (depth of water)          = {wl_us:.2f} - {geom.heel_elevation:.2f} = {H_wg:.2f} m')
             ln(f'  │    a_h/g                       = {ah/g_eq:.6f}')
             ln(f'  │    θ (face inclination)        = {math.degrees(theta):.2f}°')
             ln(f'  │    cos²θ                       = {cos2t:.6f}')
             row('│  F_hd = (7/12)(a_h/g)γ_w H² cos²θ',
-                f'(7/12)×{ah/g_eq:.4f}×{gw:.1f}×{H_wg:.3f}²×{cos2t:.4f}', f'{H:.3f}', 'kN/m')
+                f'(7/12)×{ah/g_eq:.4f}×{gw:.1f}×{H_wg:.2f}²×{cos2t:.4f}', f'{H:.1f}', 'kN/m')
             y_arm = 0.4 * H_wg
-            ln(f'  │  Moment arm = 0.4 × H         = 0.4 × {H_wg:.3f} = {y_arm:.4f} m')
-            ln(f'  │  Overturning → M_ov = F × y   = {H:.3f} × {y:.4f} = {H*y:.3f} kN·m/m')
+            ln(f'  │  Moment arm = 0.4 × H         = 0.4 × {H_wg:.2f} = {y_arm:.2f} m')
+            ln(f'  │  Overturning → M_ov = F × y   = {H:.1f} × {y:.2f} = {H*y:.1f} kN·m/m')
 
         else:
-            ln(f'  │  V = {V:.3f} kN/m   H = {H:.3f} kN/m')
-            ln(f'  │  x = {x:.4f} m   y = {y:.4f} m')
+            ln(f'  │  V = {V:.1f} kN/m   H = {H:.1f} kN/m')
+            ln(f'  │  x = {x:.2f} m   y = {y:.2f} m')
 
         ln(f'  └─')
 
@@ -1688,11 +1688,11 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
         Mh_r = H_f * y_f if (H_f > 0 and stab)     else 0.0
         Mh_o = H_f * y_f if (H_f > 0 and not stab) else 0.0
         m_r = Mv_r + Mh_r; m_o = Mv_o + Mh_o
-        ln(f'  {f["name"]:<38s} {V_f:>10.3f} {H_f:>10.3f} {x_f:>8.4f} {y_f:>8.4f} {m_r:>10.3f} {m_o:>10.3f}')
+        ln(f'  {f["name"]:<38s} {V_f:>10.1f} {H_f:>10.1f} {x_f:>8.2f} {y_f:>8.2f} {m_r:>10.1f} {m_o:>10.1f}')
     ln(f'  {"":38s} {"-"*10} {"-"*10} {"":8s} {"":8s} {"-"*10} {"-"*10}')
     sv = res['sum_V']; hn = res['H_net']
     smr = res['sum_M_res']; smo = res['sum_M_ov']
-    ln(f'  {"TOTAL / NET":<38s} {sv:>10.3f} {hn:>10.3f} {"":8s} {"":8s} {smr:>10.3f} {smo:>10.3f}')
+    ln(f'  {"TOTAL / NET":<38s} {sv:>10.1f} {hn:>10.1f} {"":8s} {"":8s} {smr:>10.1f} {smo:>10.1f}')
 
     # ── Stability calculations ────────────────────────────────────────────────
     hdr2('STABILITY CALCULATIONS')
@@ -1709,35 +1709,35 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
         sin_a = _math.sin(alpha); cos_a = _math.cos(alpha)
         ln(f'  sin α = {sin_a:.6f},  cos α = {cos_a:.6f}')
         ln(f'  N = ΣV·cosα - ΣH·sinα')
-        ln(f'    = {sv:.3f}·{cos_a:.6f} - {hn:.3f}·{sin_a:.6f}')
-        ln(f'    = {N_f:.3f} kN/m  (normal to base)')
+        ln(f'    = {sv:.1f}·{cos_a:.6f} - {hn:.1f}·{sin_a:.6f}')
+        ln(f'    = {N_f:.1f} kN/m  (normal to base)')
         ln(f'  T = ΣH·cosα + ΣV·sinα')
-        ln(f'    = {hn:.3f}·{cos_a:.6f} + {sv:.3f}·{sin_a:.6f}')
-        ln(f'    = {T_f:.3f} kN/m  (shear along base, downstream +ve)')
+        ln(f'    = {hn:.1f}·{cos_a:.6f} + {sv:.1f}·{sin_a:.6f}')
+        ln(f'    = {T_f:.1f} kN/m  (shear along base, downstream +ve)')
     else:
-        ln(f'  N = ΣV = {N_f:.3f} kN/m')
-        ln(f'  T = ΣH = {T_f:.3f} kN/m')
+        ln(f'  N = ΣV = {N_f:.1f} kN/m')
+        ln(f'  T = ΣH = {T_f:.1f} kN/m')
 
     fs_s = res['FS_sliding']
-    fs_s_str = '∞' if fs_s >= 9998 else f'{fs_s:.4f}'
+    fs_s_str = '∞' if fs_s >= 9998 else f'{fs_s:.2f}'
     ln()
     ln(f'  Sliding:')
     if T_f > 1e-6:
         ln(f'    FS = μ × N / T')
-        ln(f'       = {mat.friction_coeff:.3f} × {N_f:.3f} / {T_f:.3f}')
+        ln(f'       = {mat.friction_coeff:.3f} × {N_f:.1f} / {T_f:.1f}')
         ln(f'       = {fs_s_str}')
     else:
         ln(f'    Net shear T ≤ 0 → FS = ∞  (no downstream sliding tendency)')
     thr = res.get('fs_threshold', 1.5)
     ok_s = '✓ PASS' if (fs_s >= thr or fs_s >= 9998) else '✗ FAIL'
-    ln(f'    Threshold ≥ {thr:.1f}   → {ok_s}')
+    ln(f'    Threshold ≥ {thr:.2f}   → {ok_s}')
 
     ln()
     fs_o = res['FS_overturning']
-    fs_o_str = '∞' if fs_o >= 9998 else f'{fs_o:.4f}'
+    fs_o_str = '∞' if fs_o >= 9998 else f'{fs_o:.2f}'
     ln(f'  Overturning:')
     ln(f'    FS = ΣM_res / ΣM_ov')
-    ln(f'       = {smr:.3f} / {smo:.3f}')
+    ln(f'       = {smr:.1f} / {smo:.1f}')
     ln(f'       = {fs_o_str}')
 
     ln()
@@ -1746,35 +1746,35 @@ def generate_detailed_calc(res, geom, mat, wl_us, wl_ds,
     L   = geom.base_length_horizontal
     ln(f'  Resultant location:')
     ln(f'    x_res = (ΣM_res - ΣM_ov) / ΣV')
-    ln(f'          = ({smr:.3f} - {smo:.3f}) / {sv:.3f}')
-    ln(f'          = {xr:.4f} m from downstream toe')
+    ln(f'          = ({smr:.1f} - {smo:.1f}) / {sv:.1f}')
+    ln(f'          = {xr:.2f} m from downstream toe')
     ln(f'    e     = L/2 - x_res')
-    ln(f'          = {L:.3f}/2 - {xr:.4f} = {ecc:.4f} m')
+    ln(f'          = {L:.2f}/2 - {xr:.2f} = {ecc:.2f} m')
     ct = res.get('resultant_check_type', 'Middle third')
     if 'L/6' in str(ct) or 'l6' in str(ct).lower():
         lo, hi = L/6, 5*L/6
-        zone_str = f'L/6 to 5L/6 = {lo:.3f} m to {hi:.3f} m'
+        zone_str = f'L/6 to 5L/6 = {lo:.2f} m to {hi:.2f} m'
     else:
         lo, hi = L/3, 2*L/3
-        zone_str = f'L/3 to 2L/3 = {lo:.3f} m to {hi:.3f} m'
+        zone_str = f'L/3 to 2L/3 = {lo:.2f} m to {hi:.2f} m'
     mid_ok = res['in_middle_third']
     ok_r   = '✓ PASS' if mid_ok else '✗ FAIL'
     ln(f'    Zone ({ct}): {zone_str}')
-    ln(f'    x_res = {xr:.4f} m → {ok_r}')
+    ln(f'    x_res = {xr:.2f} m → {ok_r}')
 
     ln()
     s_toe  = res['sigma_toe']
     s_heel = res['sigma_heel']
     ln(f'  Base stress (linear distribution):')
     ln(f'    σ_toe  = ΣV/L × (1 + 6e/L)')
-    ln(f'           = {sv:.3f}/{L:.3f} × (1 + 6×{ecc:.4f}/{L:.3f})')
+    ln(f'           = {sv:.1f}/{L:.2f} × (1 + 6×{ecc:.2f}/{L:.2f})')
     ln(f'           = {s_toe:.3f} kN/m²')
     ln(f'    σ_heel = ΣV/L × (1 - 6e/L)')
-    ln(f'           = {sv:.3f}/{L:.3f} × (1 - 6×{ecc:.4f}/{L:.3f})')
+    ln(f'           = {sv:.1f}/{L:.2f} × (1 - 6×{ecc:.2f}/{L:.2f})')
     ln(f'           = {s_heel:.3f} kN/m²')
     tl = res['tension_length']
     if tl > 1e-6:
-        ln(f'    Tension zone length = {tl:.4f} m (heel in tension)')
+        ln(f'    Tension zone length = {tl:.2f} m (heel in tension)')
 
     ln()
     ln('=' * 72)
