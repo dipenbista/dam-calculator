@@ -362,18 +362,18 @@
     <div class="card-body">
       <label>HRV+IS — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="HRV_us" value="109" step="0.1" placeholder="US">
-        <input type="number" id="HRV_ds" value="100" step="0.1" placeholder="DS">
+        <input type="number" id="HRV_us" value="101.18" step="0.1" placeholder="US">
+        <input type="number" id="HRV_ds" value="93" step="0.1" placeholder="DS">
       </div>
       <label>DFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="DFV_us" value="110" step="0.1" placeholder="US">
-        <input type="number" id="DFV_ds" value="100" step="0.1" placeholder="DS">
+        <input type="number" id="DFV_us" value="101.55" step="0.1" placeholder="US">
+        <input type="number" id="DFV_ds" value="93" step="0.1" placeholder="DS">
       </div>
       <label>MFV — Upstream / Downstream</label>
       <div class="row2">
-        <input type="number" id="MFV_us" value="112" step="0.1" placeholder="US">
-        <input type="number" id="MFV_ds" value="102" step="0.1" placeholder="DS">
+        <input type="number" id="MFV_us" value="101.75" step="0.1" placeholder="US">
+        <input type="number" id="MFV_ds" value="93" step="0.1" placeholder="DS">
       </div>
     </div>
   </div>
@@ -385,7 +385,7 @@
     </div>
     <div class="card-body">
       <label>Unit weight of dam (kN/m³)</label>
-      <input type="number" id="uw_dam"   value="23"  step="0.1">
+      <input type="number" id="uw_dam"   value="24"  step="0.1">
       <label>Unit weight of water (kN/m³)</label>
       <input type="number" id="uw_water" value="10"  step="0.1">
       <label>Friction coefficient (μ)</label>
@@ -426,7 +426,7 @@
       </div>
       <div class="sub-fields" id="silt_sub">
         <label>Silt surface elevation (m absolute)</label>
-        <input type="number" id="silt_h"  value="102.0" step="0.1">
+        <input type="number" id="silt_h"  value="95.5" step="0.1">
         <label>Submerged unit weight (kN/m³)</label>
         <input type="number" id="silt_uw" value="9.0" step="0.1">
         <label>Friction angle φ (°)</label>
@@ -489,7 +489,7 @@
     </div>
     <div class="card-body">
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="rb_on" checked onchange="toggleSub('rb_sub',this)">
+        <label class="switch"><input type="checkbox" id="rb_on" onchange="toggleSub('rb_sub',this)">
           <span class="slider"></span></label>
         <label>Include rock bolts</label>
       </div>
@@ -500,7 +500,7 @@
         <input type="number" id="rb_cover" value="0.5" step="0.1">
         <div class="toggle-row" style="margin-top:8px">
           <label class="switch">
-            <input type="checkbox" id="rb_limit_on" checked onchange="toggleRbLimit()">
+            <input type="checkbox" id="rb_limit_on" onchange="toggleRbLimit()">
             <span class="slider"></span>
           </label>
           <label>Apply depth limit</label>
@@ -563,7 +563,7 @@
         <thead>
           <tr>
             <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Force (kN/m)</th>
-            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Distance from toe (m)</th>
+            <th style="background:#2e6da4;color:white;padding:5px 6px;text-align:left">Distance from heel (m)</th>
             <th style="background:#2e6da4;color:white;padding:5px 4px;width:28px"></th>
           </tr>
         </thead>
@@ -601,14 +601,14 @@
     </div>
     <div class="card-body">
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="eq_on" onchange="toggleEqOn()"><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="eq_on" checked onchange="toggleEqOn()"><span class="slider"></span></label>
         <label>Include earthquake load case</label>
       </div>
       <div class="sub-fields collapsed" id="eq_sub">
         <label>Horizontal acceleration aₕ (m/s²)</label>
-        <input type="number" id="eq_ah" value="1.5" step="0.01" min="0">
+        <input type="number" id="eq_ah" value="1.25" step="0.01" min="0">
         <label>Vertical acceleration aᵥ (m/s²)</label>
-        <input type="number" id="eq_av" value="0.75" step="0.01" min="0">
+        <input type="number" id="eq_av" value="0.675" step="0.01" min="0">
         <p style="font-size:0.72rem;color:#888;margin-top:6px;line-height:1.5">
           Two sub-cases per EC8: X-dom (full aₕ, 0.3aᵥ) and Y-dom (0.3aₕ, full aᵥ).<br>
           Worst case assumed: horizontal toward dam + vertical upward. Ice excluded.
@@ -666,7 +666,7 @@
         <label>DFV (no rock bolts)</label>
       </div>
       <div class="toggle-row">
-        <label class="switch"><input type="checkbox" id="run_EQ"><span class="slider"></span></label>
+        <label class="switch"><input type="checkbox" id="run_EQ" checked><span class="slider"></span></label>
         <label>HRV+EQ — Seismic (EC8)</label>
       </div>
     </div>
@@ -850,7 +850,7 @@ function addForceRow(tableId) {
   const tbody = document.getElementById(tableId);
   const tr    = document.createElement('tr');
   const col1lbl = tableId === 'vtable' ? 'Force (kN/m)' : 'Force (kN/m)';
-  const col2lbl = tableId === 'vtable' ? 'dist_from_toe' : 'height_above_toe';
+  const col2lbl = tableId === 'vtable' ? 'dist_from_heel' : 'height_above_toe';
   tr.innerHTML = `
     <td style="padding:3px 4px">
       <input type="number" step="any" placeholder="e.g. 50"
@@ -1001,13 +1001,13 @@ function renderMHResults(data) {
       const midOk      = res.in_middle_third;
       const color      = (fsOk && midOk) ? '#1a6b3a' : '#8b1a1a';
       const bg         = (fsOk && midOk) ? '#d6f0e0' : '#fdecea';
-      const fsDisp     = res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3);
-      const xrDisp     = res.x_resultant.toFixed(3);
+      const fsDisp     = res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(2);
+      const xrDisp     = res.x_resultant.toFixed(2);
       const Lsec       = sec.base_width;
       const [zLo, zHi] = res.resultant_check_type === 'Middle third'
         ? [Lsec / 3, 2 * Lsec / 3]
         : [Lsec / 6, 5 * Lsec / 6];
-      const xrCrit     = `${zLo.toFixed(3)}–${zHi.toFixed(3)} m`;
+      const xrCrit     = `${zLo.toFixed(2)}–${zHi.toFixed(2)} m`;
       return `<tr style="background:${bg}">
         <td style="padding:5px 8px;font-weight:600;color:${color}">${displayCaseName(res.case_name)}</td>
         <td style="padding:5px 8px;text-align:right">${fsDisp}</td>
@@ -1020,8 +1020,8 @@ function renderMHResults(data) {
     card.innerHTML = `
       <div class="mh-result-head">
         ⛰ ${sec.label}
-        &nbsp;|&nbsp; Heel: ${sec.heel_elevation.toFixed(1)} m
-        &nbsp;|&nbsp; Toe: ${sec.toe_elevation.toFixed(1)} m
+        &nbsp;|&nbsp; Heel: ${sec.heel_elevation.toFixed(2)} m
+        &nbsp;|&nbsp; Toe: ${sec.toe_elevation.toFixed(2)} m
         &nbsp;|&nbsp; L = ${sec.base_width.toFixed(2)} m
         &nbsp;|&nbsp; Height = ${sec.dam_height.toFixed(2)} m
       </div>
@@ -1627,7 +1627,7 @@ function updateLivePreview() {
     const {sy} = toSvg(0, ely);
     if (sy < MT-2 || sy > SVG_H-MB+4) return;
     html += `<line x1="${axisX}" y1="${sy}" x2="${axisX+4}" y2="${sy}" stroke="#999" stroke-width="0.8"/>`;
-    html += `<text x="${axisX+6}" y="${sy+3}" fill="#444" font-size="7.5">${ely.toFixed(1)}</text>`;
+    html += `<text x="${axisX+6}" y="${sy+3}" fill="#444" font-size="7.5">${ely.toFixed(2)}</text>`;
   });
 
   // ── Base width dimension ──────────────────────────────────────────────────
@@ -1899,25 +1899,25 @@ function renderResults(data) {
       </div>`;
 
     // Build threshold label for FS Sliding card
-    const fsLabel = `FS Sliding (≥ ${fsThresh.toFixed(1)})`;
+    const fsLabel = `FS Sliding (≥ ${fsThresh.toFixed(2)})`;
     // Build resultant label from backend-provided resultant_check_type
     const L = geom.base_length_horizontal;
     const [zoneLo, zoneHi] = res.resultant_check_type === 'Middle third'
       ? [L / 3, 2 * L / 3]
       : [L / 6, 5 * L / 6];
-    const midLabel = `Resultant (${zoneLo.toFixed(3)} – ${zoneHi.toFixed(3)} m)`;
+    const midLabel = `Resultant (${zoneLo.toFixed(2)} – ${zoneHi.toFixed(2)} m)`;
 
     const summaryHtml = `
       <div class="summary-grid">
-        ${kpi(res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(3), fsLabel, fsSlideOk)}
-        ${kpi(res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(3), 'FS Overturning', null)}
+        ${kpi(res.FS_sliding >= 9998 ? '∞' : res.FS_sliding.toFixed(2), fsLabel, fsSlideOk)}
+        ${kpi(res.FS_overturning >= 9998 ? '∞' : res.FS_overturning.toFixed(2), 'FS Overturning', null)}
         ${kpi(res.in_middle_third ? '✓ OK' : '✗ Outside', midLabel, midOk)}
         ${kpi(res.sigma_toe.toFixed(1)  + ' kN/m²', 'σ Toe',  res.sigma_toe  >= 0)}
         ${kpi(res.sigma_heel.toFixed(1) + ' kN/m²', 'σ Heel', heelOk)}
-        ${kpi(res.x_resultant.toFixed(3) + ' m',    `Resultant x from toe (${zoneLo.toFixed(3)}–${zoneHi.toFixed(3)} m)`, null)}
-        ${kpi(res.eccentricity.toFixed(3) + ' m',   'Eccentricity e', null)}
+        ${kpi(res.x_resultant.toFixed(2) + ' m',    `Resultant x from toe (${zoneLo.toFixed(2)}–${zoneHi.toFixed(2)} m)`, null)}
+        ${kpi(res.eccentricity.toFixed(2) + ' m',   'Eccentricity e', null)}
         ${kpi(res.tension_length > 0.001
-              ? res.tension_length.toFixed(3) + ' m' : '—',
+              ? res.tension_length.toFixed(2) + ' m' : '—',
               'Tension zone (from heel)', res.tension_length < 0.001)}
       </div>`;
 
@@ -1926,12 +1926,12 @@ function renderResults(data) {
       <tr class="${r.stabilising ? 'stabilising' : 'destab'}">
         <td>${r.name} ${r.stabilising ? '<span style="color:#27ae60;font-size:.7rem">▲S</span>'
                                        : '<span style="color:#e74c3c;font-size:.7rem">▼D</span>'}</td>
-        <td>${r.V.toFixed(2)}</td>
-        <td>${r.H.toFixed(2)}</td>
-        <td>${r.x_from_toe.toFixed(3)}</td>
-        <td>${r.y_from_toe.toFixed(3)}</td>
-        <td>${r.M_res.toFixed(2)}</td>
-        <td>${r.M_ov.toFixed(2)}</td>
+        <td>${r.V.toFixed(1)}</td>
+        <td>${r.H.toFixed(1)}</td>
+        <td>${r.x_from_toe.toFixed(2)}</td>
+        <td>${r.y_from_toe.toFixed(2)}</td>
+        <td>${r.M_res.toFixed(1)}</td>
+        <td>${r.M_ov.toFixed(1)}</td>
       </tr>`).join('');
 
     const tableHtml = `
@@ -1952,11 +1952,11 @@ function renderResults(data) {
             ${rows}
             <tr class="total">
               <td>RESULTANT</td>
-              <td>${res.sum_V.toFixed(2)}</td>
-              <td>${res.H_net.toFixed(2)}</td>
+              <td>${res.sum_V.toFixed(1)}</td>
+              <td>${res.H_net.toFixed(1)}</td>
               <td colspan="2"></td>
-              <td>${res.sum_M_res.toFixed(2)}</td>
-              <td>${res.sum_M_ov.toFixed(2)}</td>
+              <td>${res.sum_M_res.toFixed(1)}</td>
+              <td>${res.sum_M_ov.toFixed(1)}</td>
             </tr>
           </tbody>
         </table>
